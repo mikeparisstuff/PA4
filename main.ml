@@ -22,13 +22,10 @@ try
 with
 | _ -> begin
 	let cool_input = (List.rev !lines) in
-	let my_elem = L "hi" in
-	let t = match_elem my_elem in
-	print_string t;
 	print_list cool_input;
 end
 
 
 (**********  BUILD THE AST FROM FILE  *************)
 
-(* let rec build_ast ast lst = match lst with *)
+let rec build_ast ast lst = match lst with
