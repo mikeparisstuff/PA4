@@ -10,8 +10,11 @@ type expr = INT of int
 type feature = ATTRIBUTE of identifier * identifier * expr option;;
 	(* | METHOD of identifier * identifier * formals list * expr;; *)
 
-type clas = CLASS of identifier * identifier option * feature list;;
-type program = PROGRAM of clas list;;
+(* name of class, optional inheritance, number of features, features list *)
+type clas = CLASS of identifier * identifier option * int * feature list;;
+
+(* number of classes, class list *)
+type program = PROGRAM of int * clas list;;
 
 (* int = line_no, string = identifier name *)
 
@@ -34,14 +37,14 @@ let rec class_list lines num_classes = match num_classes with
 			line_no :: name :: "no_inherits" :: num_features :: lines -> begin
 				let (rem_lines, ast_nodes) = feature_list lines (int_of_string num_features) in
 				let line_num = int_of_string line_no in
-				CLASS( IDENT(line_num, name), None, ast_nodes ) :: (class_list rem_lines (num_classes-1));
+				CLASS( IDENT(line_num, name), None, (int_of_string num_features), ast_nodes ) :: (class_list rem_lines (num_classes-1));
 			end
 		|   _ -> []
 ;;
 
 let ast lst = match lst with
-	num_classes :: lines -> PROGRAM( (class_list lines (int_of_string num_classes) ) )
-|   [] -> PROGRAM( []);;
+	num_classes :: lines -> PROGRAM((int_of_string num_classes) , (class_list lines (int_of_string num_classes) ) )
+|   [] -> PROGRAM(0, []);;
 
 let print_list lst = List.iter (fun a -> print_string (a ^ "\n")) lst;;
 
@@ -63,15 +66,19 @@ let rec print_feature_list feat_list = match feat_list with
 let rec print_class_list class_list = match class_list with
 	[] -> ()
 |   hd :: tl -> match hd with
-		CLASS(ident, None, feat_list) -> print_identifier ident;
+		CLASS(ident, None, num_features, feat_list) -> print_identifier ident;
 									print_string "no_inherits\n";
+									Printf.printf "%d\n" num_features;
+									print_string "attribute_no_init\n";
 									print_feature_list feat_list;
 									print_class_list tl;
 	|   _ -> print_string "NOT A CLASS"
 ;;
 
 let rec print_ast ast = match ast with
-	PROGRAM(class_list) -> print_class_list class_list
+	PROGRAM(num_classes, class_list) -> 
+				Printf.printf "%d\n" num_classes;
+				print_class_list class_list;
 |   _ -> print_string "NOT A PROGRAM"
 ;;
 
