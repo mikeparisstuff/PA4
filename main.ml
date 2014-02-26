@@ -46,6 +46,35 @@ let ast lst = match lst with
 let print_list lst = List.iter (fun a -> print_string (a ^ "\n")) lst;;
 
 (****************  PRINTING HELPER METHODS *****************)
+let print_identifier ident = match ident with
+	IDENT(line_no, str) -> Printf.printf "%d\n%s\n" line_no str
+|   _ -> print_string "NOT IDENTIFIER"
+;;
+
+let rec print_feature_list feat_list = match feat_list with
+	[] -> ()
+|   hd :: tl -> match hd with
+		ATTRIBUTE(ident, typ, expr) -> print_identifier ident;
+										print_identifier typ;
+										print_feature_list tl;
+	|   _ -> print_string "NOT ATTRIBUTE"
+;;
+
+let rec print_class_list class_list = match class_list with
+	[] -> ()
+|   hd :: tl -> match hd with
+		CLASS(ident, None, feat_list) -> print_identifier ident;
+									print_string "no_inherits\n";
+									print_feature_list feat_list;
+									print_class_list tl;
+	|   _ -> print_string "NOT A CLASS"
+;;
+
+let rec print_ast ast = match ast with
+	PROGRAM(class_list) -> print_class_list class_list
+|   _ -> print_string "NOT A PROGRAM"
+;;
+
 (* let rec print_ast ast = match ast with
 | 	PROGRAM(clas_list) -> List.iter print_ast clas_list
 |   CLASS(t, i, feat_list) -> print_ast t
@@ -76,13 +105,14 @@ with
 	let cool_input = (List.rev !lines) in
 	(* print_list cool_input; *)
 	let p = ast cool_input in
-	match p with 
+	print_ast p;
+	(* match p with 
 	PROGRAM(class_list) -> match class_list with
 			hd :: rest -> match hd with
 				CLASS(i1, i2, f) -> match i1 with
 					IDENT(line_no, name) -> Printf.printf "%s\n" name
 				|   _ -> print_string "NO MATCH 3"
 			|   _ -> print_string "NO MATCH 2"
-	|   _ -> print_string "NO MATCH"
+	|   _ -> print_string "NO MATCH" *)
 end
 	
