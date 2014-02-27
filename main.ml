@@ -7,8 +7,34 @@ type identifier = IDENT of int * string;;
 type formals = FORMAL of identifier * identifier;;
 
 (* INT(line_no, value) *)
+type case_element = CE of identifier * identifier * expr;;
+
+type let_binding = LB_NO_INIT of identifier * identifier
+	| LB_INIT of identifier * identifier * expr;;
+
 type expr = INT of int * int
-	| STRING of int * string;;
+	| STRING of int * string
+	| ASSIGN of int * identifier * expr
+	| DYN_DISPATCH of expr * identifier * expr list
+	| STAT_DISPATCH of expr * identifier * identifier * expr list
+	| SELF_DISPATCH of identifier * expr list
+	| IF_ELSE of expr * expr * expr
+	| WHILE of expr * expr
+	| BLOCK of expr list
+	| NEW of identifier
+	| ISVOID of expr
+	| PLUS of expr * expr
+	| MINUS of expr * expr
+	| TIMES of expr * expr
+	| DIVIDE of expr * expr
+	| LT of expr * expr
+	| LE of expr * expr
+	| EQ of expr * expr
+	| NOT of expr
+	| NEGATE of expr
+	| BOOL of string
+	| LET of let_binding list * expr
+	| CASE of expr * case_element list;;
 
 type feature = ATTRIBUTE of identifier * identifier * expr option
 	| METHOD of identifier * identifier * formals list * expr;;
@@ -26,6 +52,16 @@ let rec build_expr lines = match lines with
 		(rem_lines, INT((int_of_string line_no), (int_of_string num)))
 |	line_no :: "string" :: word :: rem_lines ->
 		(rem_lines, STRING( (int_of_string line_no), word))
+|   line_no :: "assign" :: iden_line_no :: name :: lines  ->
+		let (rem_lines, expr) = build_expr lines in
+		let line_num = int_of_string line_no
+		and iden_line_num = int_of_string iden_line_no in
+		( rem_lines, ASSIGN( line_num, IDENT(iden_line_num, name), expr) )
+| 	line_no :: "let" :: num_bindings :: lines ->
+		let (rem_lines, bindings) = binding_list lines in
+		let (rem_lines, expr) = build_expr rem_lines in
+		let line_num = int_of_string line_no
+		and num_bindings = int_of_string num_bindings in
 |   _ -> ([], STRING(0, "DIFFERENT EXPRESSION"))
 
 let rec formal_list lines num_formals = match num_formals with 
@@ -43,10 +79,17 @@ let rec formal_list lines num_formals = match num_formals with
 let rec feature_list lines num_features = match num_features with
 	0 -> (lines, [])
 |   _ -> match lines with
-			"attribute_no_init" :: line_no :: name :: type_line_no :: t :: rem_lines -> begin
-					let (rem, feature_nodes) = feature_list rem_lines (num_features-1) in
+			"attribute_no_init" :: line_no :: name :: type_line_no :: t :: lines -> begin
+					let (rem, feature_nodes) = feature_list lines (num_features-1) in
 					let (line_num, type_line_num) = ( (int_of_string line_no), (int_of_string type_line_no)) in
 					(rem, ATTRIBUTE(IDENT(line_num, name), IDENT(type_line_num, t), None) :: feature_nodes );
+				end
+		|   "attribute_init" :: line_no :: name :: type_line_no :: type_name :: lines -> begin
+					let (rem_lines, expr) = build_expr lines in
+					let (rem, feature_nodes) = feature_list rem_lines (num_features-1) in
+					let line_num = int_of_string line_no
+					and type_line_num = int_of_string type_line_no in
+					(rem, ATTRIBUTE( IDENT(line_num, name), IDENT(type_line_num, type_name), Some(expr)) :: feature_nodes );
 				end
 		|   "method" :: line_no :: name :: num_formals :: type_line_no :: type_name :: lines -> begin
 					(* METHOD WITH 0 FORMALS -- NEED ANOTHER RULE FOR METHODS WITH FORMALS *)
@@ -109,6 +152,12 @@ let rec print_feature_list feat_list = match feat_list with
 							print_string "attribute_no_init\n";
 							print_identifier ident;
 							print_identifier typ;
+							print_feature_list tl;
+	|   ATTRIBUTE(ident, typ, Some(expr)) ->
+	 						print_string "attribute_init\n";
+							print_identifier ident;
+							print_identifier typ;
+							print_expr expr;
 							print_feature_list tl;
 	|   METHOD(name, typ, formals, expr) -> 
 							print_string "method\n";
