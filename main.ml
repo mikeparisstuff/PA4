@@ -15,9 +15,9 @@ and let_binding = LB_NO_INIT of identifier * identifier
 and expr = INT of int * int
 	| STRING of int * string
 	| ASSIGN of int * identifier * expr
-	| DYN_DISPATCH of expr * identifier * expr list
-	| STAT_DISPATCH of expr * identifier * identifier * expr list
-	| SELF_DISPATCH of identifier * expr list
+	| DYN_DISPATCH of int * expr * identifier * expr list
+	| STAT_DISPATCH of int * expr * identifier * identifier * expr list
+	| SELF_DISPATCH of int * identifier * expr list
 	| IF_ELSE of int * expr * expr * expr
 	| WHILE of int * expr * expr
 	| BLOCK of int * expr list
@@ -35,7 +35,7 @@ and expr = INT of int * int
 	| TRUE of int
 	| FALSE of int
 	| LET of int * let_binding list * expr
-	| CASE of expr * case_element list
+	| CASE of int * expr * case_element list
 	| IDENTIFIER of int * identifier
 
 and feature = ATTRIBUTE of identifier * identifier * expr option
@@ -48,7 +48,7 @@ and clas = CLASS of identifier * identifier option * int * feature list
 and program = PROGRAM of int * clas list;;
 
 
-(**********  BUILD THE AST FROM FILE  *************)
+(****************************  BUILD THE AST FROM FILE  ************************************)
 let rec binding_list lines num_bindings = match num_bindings with
 	0 -> (lines, [])
 |	_ -> match lines with
@@ -72,7 +72,21 @@ and expr_list lines num_exprs = match num_exprs with
 	let (rem_lines, expr_list) = expr_list rem_lines (num_exprs-1) in
 	(rem_lines, expr :: expr_list)
 
+and build_identifier lines = match lines with
+	line_no :: ident :: lines ->
+		(lines, IDENT((int_of_string line_no), ident))
+|	[] -> ([], IDENT(0, "NOT GOOD"))
 
+and case_element_list lines num_elems = match num_elems with
+	0 -> (lines, [])
+|	_ -> match lines with
+		line_no :: name :: typ_line_no :: typ :: lines ->
+			(* Printf.printf "Found case elem on line: %s with name: %s and type: %s\n" line_no name typ; *)
+			let (rem_lines, expr) = build_expr lines in
+			let (rem_lines, elem_list) = case_element_list rem_lines (num_elems -1) in
+			let line_num = int_of_string line_no
+			and typ_line_num = int_of_string typ_line_no in
+			(rem_lines, CE( IDENT(line_num, name), IDENT(typ_line_num, typ), expr ) :: elem_list)
 
 and build_expr lines = match lines with
 	line_no :: "integer" :: num :: rem_lines -> 
@@ -89,6 +103,11 @@ and build_expr lines = match lines with
 		let (rem_lines, expr) = build_expr rem_lines in
 		let line_num = int_of_string line_no in
 		( rem_lines, LET(line_num, bindings, expr) )
+|   line_no :: "case" :: lines -> 
+		let (rem_lines, expr) = build_expr lines in
+		let num_elems :: rem = rem_lines in
+		let (rem_lines, case_elements) = case_element_list rem (int_of_string num_elems) in
+		( rem_lines, CASE( (int_of_string line_no), expr, case_elements ))
 | 	line_no :: "if" :: lines ->
 		let (rem_lines, expr) = build_expr lines in
 		let (rem_lines, expr1) = build_expr rem_lines in
@@ -153,7 +172,7 @@ and build_expr lines = match lines with
 |   line_no :: "negate" :: lines -> 
 		let (rem_lines, expr) = build_expr lines in
 		let line_num = int_of_string line_no in
-		(rem_lines, NOT( line_num, expr ))
+		(rem_lines, NEGATE( line_num, expr ))
 |   line_no :: "isvoid" :: lines -> 
 		let (rem_lines, expr) = build_expr lines in
 		let line_num = int_of_string line_no in
@@ -168,12 +187,43 @@ and build_expr lines = match lines with
 |   line_no :: "false" :: lines -> 
 		let line_num = int_of_string line_no in
 		(lines, FALSE(line_num))
-(* |   line_no :: "dynamic_dispatch" :: lines  -> 
+|   line_no :: "self_dispatch" :: meth_line_no :: meth :: num_exprs :: lines -> 
+		let (rem_lines, exprs) = expr_list lines (int_of_string num_exprs) in
+		let line_num = int_of_string line_no
+		and ident_line_num = int_of_string meth_line_no in
+		(rem_lines, SELF_DISPATCH( line_num, IDENT(ident_line_num, meth), exprs ) )
+|   line_no :: "dynamic_dispatch" :: lines -> 
 		let (rem_lines, expr) = build_expr lines in
-		match rem_lines with
-			line_no :: ident :: rem_lines -> match rem_lines with 
-				num_exprs :: lines -> 
-					let (rem_lines, expr_list) = expr_list lines in *)
+		let (rem_lines, ident) = build_identifier rem_lines in
+		let num_exprs :: rem_lines = rem_lines in
+		let (rem_lines, exprs) = expr_list rem_lines (int_of_string num_exprs) in
+		let line_num = int_of_string line_no in
+		(rem_lines, DYN_DISPATCH(line_num, expr, ident, exprs))
+		(* match rem_lines with
+			ident_line_no :: ident :: num_exprs :: lines ->
+				let (rem_lines, exprs) = expr_list lines (int_of_string num_exprs) in
+				let line_num = int_of_string line_no 
+				and ident_line_num = int_of_string ident_line_no in
+				(rem_lines, DYN_DISPATCH(line_num, expr, IDENT(ident_line_num, ident), exprs))
+		|   [] -> (rem_lines, DYN_DISPATCH(0, expr, IDENT(0, ""), [])) *)
+|   line_no :: "static_dispatch" :: lines -> 
+
+		let (rem_lines, expr) = build_expr lines in
+		let (rem_lines, ident1) = build_identifier rem_lines in
+		let (rem_lines, ident2) = build_identifier rem_lines in
+		let num_exprs :: rem_lines = rem_lines in
+		let (rem_lines, exprs) = expr_list rem_lines (int_of_string num_exprs) in
+		let line_num = int_of_string line_no in
+		(rem_lines, STAT_DISPATCH(line_num, expr, ident1, ident2, exprs))
+
+		(* match rem_lines with
+			typ_line_no :: typ :: method_line_no :: meth :: num_exprs :: lines ->
+				let (rem_lines, exprs) = expr_list lines (int_of_string num_exprs) in
+				let typ_line_num = int_of_string typ_line_no
+				and method_line_num = int_of_string method_line_no
+				and line_num = int_of_string line_no in
+				(rem_lines, STAT_DISPATCH(line_num, expr, IDENT(typ_line_num, typ), IDENT(method_line_num, meth), exprs))
+		|   [] -> (rem_lines, STAT_DISPATCH(0, expr, IDENT(0, ""), IDENT(0, ""), [])) *)
 |   _ -> ([], STRING(0, "DIFFERENT EXPRESSION"))
 ;;
 
@@ -204,20 +254,15 @@ let rec feature_list lines num_features = match num_features with
 					and type_line_num = int_of_string type_line_no in
 					(rem, ATTRIBUTE( IDENT(line_num, name), IDENT(type_line_num, type_name), Some(expr)) :: feature_nodes );
 				end
-		|   "method" :: line_no :: name :: num_formals :: type_line_no :: type_name :: lines -> begin
-					(* METHOD WITH 0 FORMALS -- NEED ANOTHER RULE FOR METHODS WITH FORMALS *)
-
-					(* Get the list of formals *)
+		|   "method" :: line_no :: name :: num_formals :: lines -> 		
 					let (lines, formals_nodes) = formal_list lines (int_of_string num_formals) in
-					(* Get this methods expression and the remaining lines after that *)
-					let (rem_lines, expr) = build_expr lines in
+					let (rem_lines, typ_ident) = build_identifier lines in
+					let (rem_lines, expr) = build_expr rem_lines in
 
 					(* Get the rest of the features in this class and the remaining lines after those *)
-					let (rem, feature_nodes) = feature_list rem_lines (num_features-1)
-					and line_num = int_of_string line_no
-					and type_line_num = int_of_string type_line_no in
-					(rem, METHOD( IDENT(line_num, name), IDENT(type_line_num, type_name), [], expr) :: feature_nodes )
-				end
+					let (rem, feature_nodes) = feature_list rem_lines (num_features-1) in
+					let line_num = int_of_string line_no in
+					(rem, METHOD( IDENT(line_num, name), typ_ident, formals_nodes, expr) :: feature_nodes )
 		| 	_ -> ([], [])
 ;;
 
@@ -245,149 +290,193 @@ let ast lst = match lst with
 
 
 
-(****************  PRINTING HELPER METHODS *****************)
+(*******************************  PRINTING HELPER METHODS *******************************)
+
 let print_list lst = List.iter (fun a -> print_string (a ^ "\n")) lst;;
 
-let print_identifier ident = match ident with
-	IDENT(line_no, str) -> Printf.printf "%d\n%s\n" line_no str
-|   _ -> print_string "NOT IDENTIFIER"
+let print_identifier ident oc = match ident with
+	IDENT(line_no, str) -> 
+			Printf.fprintf oc "%d\n%s\n" line_no str;
+			(* Printf.printf "%d\n%s\n" line_no str *)
+
+|   _ -> Printf.fprintf oc "NOT IDENTIFIER"
 ;;
 
-let rec print_bindings bindings = match bindings with
+let rec print_bindings bindings oc = match bindings with
 	[] -> ()
 |	LB_NO_INIT(ident, typ) :: tl  -> 
-				print_string "let_binding_no_init\n";
-				print_identifier ident;
-				print_identifier typ;
-				print_bindings tl;
+				Printf.fprintf oc "let_binding_no_init\n";
+				print_identifier ident oc;
+				print_identifier typ oc;
+				print_bindings tl oc;
 |	LB_INIT(ident, typ, expr) :: tl ->
-				print_string "let_binding_init\n";
-				print_identifier ident;
-				print_identifier typ;
-				print_expr expr;
-				print_bindings tl;
+				Printf.fprintf oc "let_binding_init\n";
+				print_identifier ident oc;
+				print_identifier typ oc;
+				print_expr oc expr;
+				print_bindings tl oc;
 |   _ -> ()
 
-and print_expr expr = match expr with
-	INT(line_no, value) -> Printf.printf "%d\ninteger\n%d\n" line_no value
-|	STRING (line_no, str) -> Printf.printf "%d\nstring\n%s\n" line_no str
+and print_case_elements elems oc = match elems with
+	[] -> ()
+|   hd :: tl -> match hd with 
+		CE (a, b, e) ->
+			print_identifier a oc;
+			print_identifier b oc;
+			print_expr oc e;
+			print_case_elements tl oc
+
+and print_expr oc expr = match expr with
+	INT(line_no, value) -> Printf.fprintf oc "%d\ninteger\n%d\n" line_no value
+|	STRING (line_no, str) -> Printf.fprintf oc "%d\nstring\n%s\n" line_no str
+|   DYN_DISPATCH (line_no, e, meth,  exprs) ->
+					Printf.fprintf oc "%d\ndynamic_dispatch\n" line_no;
+					print_expr oc e;
+					print_identifier meth oc;
+					Printf.fprintf oc "%d\n" (List.length exprs);
+					List.iter (print_expr oc) exprs;
+|   STAT_DISPATCH (line_no, e, typ, meth, exprs) -> 
+					Printf.fprintf oc "%d\nstatic_dispatch\n" line_no;
+					print_expr oc e;
+					print_identifier typ oc;
+					print_identifier meth oc;
+					Printf.fprintf oc "%d\n" (List.length exprs);
+					List.iter (print_expr oc) exprs;
+|   SELF_DISPATCH (line_no, meth, exprs) -> 
+					Printf.fprintf oc "%d\nself_dispatch\n" line_no;
+					print_identifier meth oc;
+					Printf.fprintf oc "%d\n" (List.length exprs);
+					List.iter (print_expr oc) exprs;
+|   CASE (line_no, expr, elems) -> 
+					Printf.fprintf oc "%d\ncase\n" line_no;
+					print_expr oc expr;
+					Printf.fprintf oc "%d\n" (List.length elems);
+					print_case_elements elems oc;
 |   ASSIGN (line_no, ident, expr) -> 
-					Printf.printf "%d\nassign\n" line_no;
-					print_identifier ident;
-					print_expr expr;
+					Printf.fprintf oc "%d\nassign\n" line_no;
+					print_identifier ident oc;
+					print_expr oc expr;
 | 	LET (line_no, bindings, expr) ->
-					Printf.printf "%d\nlet\n%d\n" line_no (List.length bindings);
-					print_bindings bindings;
-					print_expr expr;
+					Printf.fprintf oc "%d\nlet\n%d\n" line_no (List.length bindings);
+					print_bindings bindings oc;
+					print_expr oc expr;
 |   IF_ELSE (line_no, expr1, expr2, expr3) -> 
-					Printf.printf "%d\nif\n" line_no;
-					print_expr expr1;
-					print_expr expr2;
-					print_expr expr3;
+					Printf.fprintf oc "%d\nif\n" line_no;
+					print_expr oc expr1;
+					print_expr oc expr2;
+					print_expr oc expr3;
 |   WHILE (line_no, expr, expr1) -> 
-					Printf.printf "%d\nwhile\n" line_no;
-					print_expr expr;
-					print_expr expr1;
+					Printf.fprintf oc "%d\nwhile\n" line_no;
+					print_expr oc expr;
+					print_expr oc expr1;
 | 	BLOCK (line_no, exprs) ->
-					Printf.printf "%d\nblock\n%d\n" line_no (List.length exprs);
-					List.iter print_expr exprs;
+					Printf.fprintf oc "%d\nblock\n%d\n" line_no (List.length exprs);
+					List.iter (print_expr oc) exprs;
 |   IDENTIFIER (line_no, ident) -> 
-					Printf.printf "%d\nidentifier\n" line_no;
-					print_identifier ident;
+					Printf.fprintf oc "%d\nidentifier\n" line_no;
+					print_identifier ident oc;
 |   PLUS (line_no, lhs, rhs) -> 
-					Printf.printf "%d\nplus\n" line_no;
-					print_expr lhs;
-					print_expr rhs;
+					Printf.fprintf oc "%d\nplus\n" line_no;
+					print_expr oc lhs;
+					print_expr oc rhs;
 |   MINUS (line_no, lhs, rhs) -> 
-					Printf.printf "%d\nminus\n" line_no;
-					print_expr lhs;
-					print_expr rhs;
+					Printf.fprintf oc "%d\nminus\n" line_no;
+					print_expr oc lhs;
+					print_expr oc rhs;
 |   TIMES (line_no, lhs, rhs) -> 
-					Printf.printf "%d\ntimes\n" line_no;
-					print_expr lhs;
-					print_expr rhs;
+					Printf.fprintf oc "%d\ntimes\n" line_no;
+					print_expr oc lhs;
+					print_expr oc rhs;
 |   DIVIDE (line_no, lhs, rhs) -> 
-					Printf.printf "%d\ndivide\n" line_no;
-					print_expr lhs;
-					print_expr rhs;
+					Printf.fprintf oc "%d\ndivide\n" line_no;
+					print_expr oc lhs;
+					print_expr oc rhs;
 | 	LT (line_no, lhs, rhs) ->
-					Printf.printf "%d\nlt\n" line_no;
-					print_expr lhs;
-					print_expr rhs;
+					Printf.fprintf oc "%d\nlt\n" line_no;
+					print_expr oc lhs;
+					print_expr oc rhs;
 |   LE (line_no, expr1, expr2) -> 
-					Printf.printf "%d\nle\n" line_no;
-					print_expr expr1;
-					print_expr expr2;
+					Printf.fprintf oc "%d\nle\n" line_no;
+					print_expr oc expr1;
+					print_expr oc expr2;
 |   EQ (line_no, expr1, expr2) -> 
-					Printf.printf "%d\neq\n" line_no;
-					print_expr expr1;
-					print_expr expr2;
+					Printf.fprintf oc "%d\neq\n" line_no;
+					print_expr oc expr1;
+					print_expr oc expr2;
 |   NOT (line_no, expr) -> 
-					Printf.printf "%d\nnot\n" line_no;
-					print_expr expr;
+					Printf.fprintf oc "%d\nnot\n" line_no;
+					print_expr oc expr;
 |   NEGATE (line_no, expr) -> 
-					Printf.printf "%d\nnegate\n" line_no;
-					print_expr expr;
+					Printf.fprintf oc "%d\nnegate\n" line_no;
+					print_expr oc expr;
 |   ISVOID (line_no, expr) -> 
-					Printf.printf "%d\nisvoid\n" line_no;
-					print_expr expr;
+					Printf.fprintf oc "%d\nisvoid\n" line_no;
+					print_expr oc expr;
 |   NEW (line_no, ident) -> 
-					Printf.printf "%d\nnew\n" line_no;
-					print_identifier ident;
+					Printf.fprintf oc "%d\nnew\n" line_no;
+					print_identifier ident oc;
 |   TRUE (line_no) ->
-					Printf.printf "%d\ntrue\n" line_no; 
+					Printf.fprintf oc "%d\ntrue\n" line_no; 
 |   FALSE (line_no) ->
-					Printf.printf "%d\nfalse\n" line_no;
+					Printf.fprintf oc "%d\nfalse\n" line_no;
 ;;
 
-let rec print_feature_list feat_list = match feat_list with
+let print_formal oc formal = match formal with
+	FORMAL(a, b) -> 
+		print_identifier a oc;
+		print_identifier b oc;
+|	_ 	-> print_string "INVALID FORMAL"
+
+
+let rec print_feature_list feat_list oc = match feat_list with
 	[] -> ()
 |   hd :: tl -> match hd with
 		ATTRIBUTE(ident, typ, None) -> 
-							print_string "attribute_no_init\n";
-							print_identifier ident;
-							print_identifier typ;
-							print_feature_list tl;
+							Printf.fprintf oc "attribute_no_init\n";
+							print_identifier ident oc;
+							print_identifier typ oc;
+							print_feature_list tl oc;
 	|   ATTRIBUTE(ident, typ, Some(expr)) ->
-	 						print_string "attribute_init\n";
-							print_identifier ident;
-							print_identifier typ;
-							print_expr expr;
-							print_feature_list tl;
+	 						Printf.fprintf oc "attribute_init\n";
+							print_identifier ident oc;
+							print_identifier typ oc;
+							print_expr oc expr;
+							print_feature_list tl oc;
 	|   METHOD(name, typ, formals, expr) -> 
-							print_string "method\n";
-							print_identifier name;
-							Printf.printf "%d\n" (List.length formals);
-							print_identifier typ;
-							print_expr expr;
-							print_feature_list tl;
-	|   _ -> print_string "NOT ATTRIBUTE"
+							Printf.fprintf oc "method\n";
+							print_identifier name oc;
+							Printf.fprintf oc "%d\n" (List.length formals);
+							List.iter (print_formal oc) formals;
+							print_identifier typ oc;
+							print_expr oc expr;
+							print_feature_list tl oc;
+	|   _ -> Printf.fprintf oc "NOT ATTRIBUTE"
 ;;
 
-let rec print_class_list class_list = match class_list with
+let rec print_class_list class_list oc = match class_list with
 	[] -> ()
 |   hd :: tl -> match hd with
 		CLASS(ident, None, num_features, feat_list) -> 
-									print_identifier ident;
-									print_string "no_inherits\n";
-									Printf.printf "%d\n" num_features;
-									print_feature_list feat_list;
-									print_class_list tl;
+									print_identifier ident oc;
+									Printf.fprintf oc "no_inherits\n";
+									Printf.fprintf oc "%d\n" num_features;
+									print_feature_list feat_list oc;
+									print_class_list tl oc;
 	|   CLASS(ident, Some(inher), num_features, feat_list) -> 
-									print_identifier ident;
-									print_string "inherits\n";
-									print_identifier inher;
-									Printf.printf "%d\n" num_features;
-									print_feature_list feat_list;
-									print_class_list tl;
-	|   _ -> print_string "NOT A CLASS"
+									print_identifier ident oc;
+									Printf.fprintf oc "inherits\n";
+									print_identifier inher oc;
+									Printf.fprintf oc "%d\n" num_features;
+									print_feature_list feat_list oc;
+									print_class_list tl oc;
+	|   _ -> Printf.fprintf oc "NOT A CLASS"
 ;;
 
-let rec print_ast ast = match ast with
+let rec print_ast ast oc = match ast with
 	PROGRAM(num_classes, class_list) -> 
-				Printf.printf "%d\n" num_classes;
-				print_class_list class_list;
-|   _ -> print_string "NOT A PROGRAM"
+				Printf.fprintf oc "%d\n" num_classes;
+				print_class_list class_list oc;
+|   _ -> Printf.fprintf oc "NOT A PROGRAM"
 ;;
 
 let filename = match Array.length (Sys.argv) with
@@ -408,6 +497,11 @@ with
 	let cool_input = (List.rev !lines) in
 	(* print_list cool_input; *)
 	let p = ast cool_input in
-	print_ast p;
+
+	(* Open output file, returning a channel to write to *)
+	let file = "out.cl-ast" in
+	let oc = open_out file in
+	print_ast p oc;
+	close_out oc;
 end
 	
