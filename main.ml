@@ -2,13 +2,16 @@
 
 (* ANI: identifier = identifier, typ = type *)
 type identifier = IDENT of int * string;;
-(* type typ = TYPE of int * string;; *)
-type formals = FORMAL of string * identifier;;
-type expr = INT of int
-	| STRING of string;;
 
-type feature = ATTRIBUTE of identifier * identifier * expr option;;
-	(* | METHOD of identifier * identifier * formals list * expr;; *)
+(* name of formal, type of formal *)
+type formals = FORMAL of identifier * identifier;;
+
+(* INT(line_no, value) *)
+type expr = INT of int * int
+	| STRING of int * string;;
+
+type feature = ATTRIBUTE of identifier * identifier * expr option
+	| METHOD of identifier * identifier * formals list * expr;;
 
 (* name of class, optional inheritance, number of features, features list *)
 type clas = CLASS of identifier * identifier option * int * feature list;;
@@ -16,10 +19,27 @@ type clas = CLASS of identifier * identifier option * int * feature list;;
 (* number of classes, class list *)
 type program = PROGRAM of int * clas list;;
 
-(* int = line_no, string = identifier name *)
-
 
 (**********  BUILD THE AST FROM FILE  *************)
+let rec build_expr lines = match lines with
+	line_no :: "integer" :: num :: rem_lines -> 
+		(rem_lines, INT((int_of_string line_no), (int_of_string num)))
+|	line_no :: "string" :: word :: rem_lines ->
+		(rem_lines, STRING( (int_of_string line_no), word))
+|   _ -> ([], STRING(0, "DIFFERENT EXPRESSION"))
+
+let rec formal_list lines num_formals = match num_formals with 
+	0 -> (lines, [])
+|   _ -> match lines with
+			line_no :: name :: type_line_no :: type_name :: rem_lines -> begin
+				let (rem, formals) = formal_list rem_lines (num_formals - 1) in
+				let line_num = int_of_string line_no
+				and type_line_num = int_of_string type_line_no in
+				(rem, FORMAL( IDENT(line_num, name), IDENT(type_line_num, type_name) ) :: formals ) 
+			end
+		|	[] -> ([], [])
+;;
+
 let rec feature_list lines num_features = match num_features with
 	0 -> (lines, [])
 |   _ -> match lines with
@@ -28,6 +48,20 @@ let rec feature_list lines num_features = match num_features with
 					let (line_num, type_line_num) = ( (int_of_string line_no), (int_of_string type_line_no)) in
 					(rem, ATTRIBUTE(IDENT(line_num, name), IDENT(type_line_num, t), None) :: feature_nodes );
 				end
+		|   "method" :: line_no :: name :: num_formals :: type_line_no :: type_name :: lines -> begin
+					(* METHOD WITH 0 FORMALS -- NEED ANOTHER RULE FOR METHODS WITH FORMALS *)
+
+					(* Get the list of formals *)
+					let (lines, formals_nodes) = formal_list lines (int_of_string num_formals) in
+					(* Get this methods expression and the remaining lines after that *)
+					let (rem_lines, expr) = build_expr lines in
+
+					(* Get the rest of the features in this class and the remaining lines after those *)
+					let (rem, feature_nodes) = feature_list rem_lines (num_features-1)
+					and line_num = int_of_string line_no
+					and type_line_num = int_of_string type_line_no in
+					(rem, METHOD( IDENT(line_num, name), IDENT(type_line_num, type_name), [], expr) :: feature_nodes )
+				end
 		| 	_ -> ([], [])
 ;;
 
@@ -35,9 +69,15 @@ let rec class_list lines num_classes = match num_classes with
 	0 -> []
 |	_ -> match lines with
 			line_no :: name :: "no_inherits" :: num_features :: lines -> begin
-				let (rem_lines, ast_nodes) = feature_list lines (int_of_string num_features) in
+				let (rem_lines, feat_nodes) = feature_list lines (int_of_string num_features) in
 				let line_num = int_of_string line_no in
-				CLASS( IDENT(line_num, name), None, (int_of_string num_features), ast_nodes ) :: (class_list rem_lines (num_classes-1));
+				CLASS( IDENT(line_num, name), None, (int_of_string num_features), feat_nodes ) :: (class_list rem_lines (num_classes-1));
+			end
+		|  line_no :: name :: "inherits" :: type_line_no :: type_name :: num_features :: lines -> begin
+				let (rem_lines, feat_nodes) = feature_list lines (int_of_string num_features) in
+				let line_num = int_of_string line_no
+				and type_line_num = int_of_string type_line_no in
+				CLASS( IDENT(line_num, name), Some(IDENT(type_line_num, type_name)), (int_of_string num_features), feat_nodes) :: (class_list rem_lines (num_classes-1));
 			end
 		|   _ -> []
 ;;
@@ -46,30 +86,54 @@ let ast lst = match lst with
 	num_classes :: lines -> PROGRAM((int_of_string num_classes) , (class_list lines (int_of_string num_classes) ) )
 |   [] -> PROGRAM(0, []);;
 
-let print_list lst = List.iter (fun a -> print_string (a ^ "\n")) lst;;
+
+
 
 (****************  PRINTING HELPER METHODS *****************)
+let print_list lst = List.iter (fun a -> print_string (a ^ "\n")) lst;;
+
 let print_identifier ident = match ident with
 	IDENT(line_no, str) -> Printf.printf "%d\n%s\n" line_no str
 |   _ -> print_string "NOT IDENTIFIER"
 ;;
 
+let rec print_expr expr = match expr with
+	INT(line_no, value) -> Printf.printf "%d\ninteger\n%d\n" line_no value
+|	STRING (line_no, str) -> Printf.printf "%d\nstring\n%s\n" line_no str
+;;
+
 let rec print_feature_list feat_list = match feat_list with
 	[] -> ()
 |   hd :: tl -> match hd with
-		ATTRIBUTE(ident, typ, expr) -> print_identifier ident;
-										print_identifier typ;
-										print_feature_list tl;
+		ATTRIBUTE(ident, typ, None) -> 
+							print_string "attribute_no_init\n";
+							print_identifier ident;
+							print_identifier typ;
+							print_feature_list tl;
+	|   METHOD(name, typ, formals, expr) -> 
+							print_string "method\n";
+							print_identifier name;
+							Printf.printf "%d\n" (List.length formals);
+							print_identifier typ;
+							print_expr expr;
+							print_feature_list tl;
 	|   _ -> print_string "NOT ATTRIBUTE"
 ;;
 
 let rec print_class_list class_list = match class_list with
 	[] -> ()
 |   hd :: tl -> match hd with
-		CLASS(ident, None, num_features, feat_list) -> print_identifier ident;
+		CLASS(ident, None, num_features, feat_list) -> 
+									print_identifier ident;
 									print_string "no_inherits\n";
 									Printf.printf "%d\n" num_features;
-									print_string "attribute_no_init\n";
+									print_feature_list feat_list;
+									print_class_list tl;
+	|   CLASS(ident, Some(inher), num_features, feat_list) -> 
+									print_identifier ident;
+									print_string "inherits\n";
+									print_identifier inher;
+									Printf.printf "%d\n" num_features;
 									print_feature_list feat_list;
 									print_class_list tl;
 	|   _ -> print_string "NOT A CLASS"
@@ -82,24 +146,12 @@ let rec print_ast ast = match ast with
 |   _ -> print_string "NOT A PROGRAM"
 ;;
 
-(* let rec print_ast ast = match ast with
-| 	PROGRAM(clas_list) -> List.iter print_ast clas_list
-|   CLASS(t, i, feat_list) -> print_ast t
-							  List.iter print_ast feat_list
-|   ATTRIBUTE(ident, typ, exp) -> begin print_ast ident; print_ast typ; end
-|	IDENT(line_no, s) -> print_string s
-|   STRING(s) -> print_string s
-|	INT(i) -> Printf.printf "%d" i
-| 	_ -> print_string "COULD NOT FIND MATCH"
-(* |	T(line_no, t) -> print_string t *)
-;; *)
-
 let filename = match Array.length (Sys.argv) with
 		2 -> Array.get Sys.argv 1
 	|   _ -> failwith "Please provide a single file command line arguments"
 ;;
 
-(* print_string (filename ^ "\n");; *)
+
 let lines = ref [] in
 let in_file = open_in filename in
 try
@@ -113,13 +165,5 @@ with
 	(* print_list cool_input; *)
 	let p = ast cool_input in
 	print_ast p;
-	(* match p with 
-	PROGRAM(class_list) -> match class_list with
-			hd :: rest -> match hd with
-				CLASS(i1, i2, f) -> match i1 with
-					IDENT(line_no, name) -> Printf.printf "%s\n" name
-				|   _ -> print_string "NO MATCH 3"
-			|   _ -> print_string "NO MATCH 2"
-	|   _ -> print_string "NO MATCH" *)
 end
 	
