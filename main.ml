@@ -14,7 +14,7 @@ and let_binding = LB_NO_INIT of identifier * identifier
 
 and expr = INT of int * int
 	| STRING of int * string
-	| ASSIGN of int * identifier * expr
+	| ASSIGN of int * identifier * expr 
 	| DYN_DISPATCH of int * expr * identifier * expr list
 	| STAT_DISPATCH of int * expr * identifier * identifier * expr list
 	| SELF_DISPATCH of int * identifier * expr list
@@ -289,7 +289,8 @@ let ast lst = match lst with
 
 
 (*******************************  CLASS MAP METHODS IGNORE THIS ************************************)
-let print_inherited_attributes oc name class_list=
+
+(* let print_inherited_attributes oc name class_list=
 	for i = 0 to List.length class_list do
 		match List.nth class_list i with
 			CLASS( name, Some(typ), num_feats, feats) ->
@@ -338,7 +339,7 @@ and print_class_map oc class_list ast= match ast with
 		List.iter (print_cm_class oc sorted_list) sorted_list;
 |   _ -> 
 		(* Ignore everything else *)
-		()
+		() *)
 
 
 
