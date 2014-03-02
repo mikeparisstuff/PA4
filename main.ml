@@ -288,6 +288,58 @@ let ast lst = match lst with
 |   [] -> PROGRAM(0, []);;
 
 
+(*******************************  CLASS MAP METHODS IGNORE THIS ************************************)
+let print_inherited_attributes oc name class_list=
+	for i = 0 to List.length class_list do
+		match List.nth class_list i with
+			CLASS( name, Some(typ), num_feats, feats) ->
+				(* Print superclass. Output this class' attributes *)
+				print_inherited_attributes oc typ class_list;
+				List.iter (print_cm_attribute oc) feats;
+		|   CLASS( name, None, num_feats, feats) -> 
+				(* Found the highest ancestor. Output attributes *)
+				List.iter (print_cm_attribute oc) feats;
+		|   _ ->
+			    (* Not an anscestor continue *)
+			    ()
+	done
+
+and print_cm_attribute oc feat = match feat with
+    ATTRIBUTE( name, typ, Some(expr)) ->
+		(* Add this attribute and print as initializer*)
+		Printf.fprintf oc "initializer\n%s\n%s\n" name typ;
+
+|   ATTRIBUTE( name, typ, None) -> 
+		(* Add this attribute and print as no_initializer *)
+		Printf.fprintf oc "no_initializer\n%s\n%s\n" name typ;
+|   _ -> 
+		(* Ignore everything else *)
+		()
+
+and print_cm_class oc class_list ast = match ast with
+	CLASS( name, Some(typ), num_feats, feats) ->
+		(* Add this class node to the class map *)
+		print_inherited_attributes oc typ class_list
+		List.iter (print_cm_attribute oc) feats
+|   CLASS( name, None, num_feats, feats) -> 
+		(* Print the attribute features *)
+		List.iter (print_cm_attribute oc) feats
+|   _ -> 
+		(* Ignore everything else *)
+		()
+
+and print_class_map oc class_list ast= match ast with
+	PROGRAM( num_classes, class_list ) -> 
+		(* Add this class node to the class map *)
+		Printf.fprintf oc "class_map\n{:d}\n" num_classes;
+		let sorted_list = List.sort (
+			fun Class(name, _, _) Class(name2, _, _) ->
+				compare name name2) class_list in
+		List.iter (print_cm_class oc sorted_list) sorted_list;
+|   _ -> 
+		(* Ignore everything else *)
+		()
+
 
 
 (*******************************  PRINTING HELPER METHODS *******************************)
