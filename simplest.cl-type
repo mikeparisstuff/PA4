@@ -8,9 +8,12 @@ Int
 0
 Main
 1
-no_initializer
+initializer
 my_attribute
 Int
+2
+integer
+5
 Object
 0
 String

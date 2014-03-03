@@ -565,7 +565,7 @@ let print_class_map class_map oc = match class_map with
                                                   CM_CLASS(name, _, feats) ->
                                                       Printf.fprintf oc "%s\n" name;
                                                       List.map (print_cm_attr oc) feats
-                                                  ))
+                                                  ) class_list)
         ;;
 
 let rec print_ast ast oc = match ast with
