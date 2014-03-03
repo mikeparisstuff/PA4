@@ -576,7 +576,8 @@ with
 	let p = ast cool_input in
 
 	(* Open output file, returning a channel to write to *)
-	let file = "out.cl-type" in
+	let f_l = Str.split (Str.regexp "[.]") filename in
+	let file = (List.hd f_l) ^ ".cl-type" in
 	let oc = open_out file in
         let classMap = class_map p in 
         (* since print_class_map has side-effects we must ignore it *)
