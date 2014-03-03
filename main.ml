@@ -3,13 +3,19 @@
 (* ANI: identifier = identifier, typ = type *)
 type identifier = IDENT of int * string
 
-(* name of formal, type of formal *)
+                           (* name, inherits from, attribute   *)
+and cm_class = CM_CLASS of string * string option * feature list
+
+and cm = CM of cm_class list
+
+(*                    name of formal, type of formal *)
 and formals = FORMAL of identifier * identifier
 
 (* INT(line_no, value) *)
 and case_element = CE of identifier * identifier * expr
-
+                  (*            name,         typ *)
 and let_binding = LB_NO_INIT of identifier * identifier
+                  (*  name,       typ          some expr *)
 	| LB_INIT of identifier * identifier * expr
 
 and expr = INT of int * int
@@ -38,10 +44,12 @@ and expr = INT of int * int
 	| CASE of int * expr * case_element list
 	| IDENTIFIER of int * identifier
 
+              (*           fname,        type,       no_init or init with expr *)
 and feature = ATTRIBUTE of identifier * identifier * expr option
+                    (* name,     return type,  () or list,   not-opt *)
 	| METHOD of identifier * identifier * formals list * expr
 
-(* name of class, optional inheritance, number of features, features list *)
+(*                  name of class, optional inheritance, number of features, features list *)
 and clas = CLASS of identifier * identifier option * int * feature list
 
 (* number of classes, class list *)
@@ -290,7 +298,8 @@ let ast lst = match lst with
 
 (*******************************  CLASS MAP METHODS IGNORE THIS ************************************)
 
-(* let print_inherited_attributes oc name class_list=
+(*
+let rec print_inherited_attributes oc name class_list=
 	for i = 0 to List.length class_list do
 		match List.nth class_list i with
 			CLASS( name, Some(typ), num_feats, feats) ->
@@ -303,43 +312,49 @@ let ast lst = match lst with
 		|   _ ->
 			    (* Not an anscestor continue *)
 			    ()
-	done
+	done *)
 
-and print_cm_attribute oc feat = match feat with
-    ATTRIBUTE( name, typ, Some(expr)) ->
+let rec cm_attribute feat_list = match feat_list with
+     [] -> []
+|    ATTRIBUTE( name, typ, Some(expr)) :: tl ->
 		(* Add this attribute and print as initializer*)
-		Printf.fprintf oc "initializer\n%s\n%s\n" name typ;
+                ATTRIBUTE(name, typ, Some(expr)) :: (cm_attribute tl)
 
-|   ATTRIBUTE( name, typ, None) -> 
+|   ATTRIBUTE( name, typ, None) :: tl -> 
 		(* Add this attribute and print as no_initializer *)
-		Printf.fprintf oc "no_initializer\n%s\n%s\n" name typ;
-|   _ -> 
+                ATTRIBUTE(name, typ, None) :: (cm_attribute tl)
+|   _ :: tl -> 
 		(* Ignore everything else *)
-		()
+		cm_attribute tl
 
-and print_cm_class oc class_list ast = match ast with
+and cm_class_list ast = match ast with
 	CLASS( name, Some(typ), num_feats, feats) ->
-		(* Add this class node to the class map *)
-		print_inherited_attributes oc typ class_list
-		List.iter (print_cm_attribute oc) feats
-|   CLASS( name, None, num_feats, feats) -> 
-		(* Print the attribute features *)
-		List.iter (print_cm_attribute oc) feats
-|   _ -> 
-		(* Ignore everything else *)
-		()
+               let IDENT(ln, name) = name in
+               let IDENT(ln, inherits) = typ in
+	       CM_CLASS(name, Some(inherits), (cm_attribute feats))
 
-and print_class_map oc class_list ast= match ast with
+    |   CLASS( name, None, num_feats, feats) -> 
+               let IDENT(ln, name) = name in
+               CM_CLASS(name, None, (cm_attribute feats))
+    |   _ -> 
+		(* Ignore everything else *)
+	       CM_CLASS("NEVEREVEREVERGETHERE", None, [])
+
+and add_names class_list = class_list
+
+and class_map ast= match ast with
 	PROGRAM( num_classes, class_list ) -> 
 		(* Add this class node to the class map *)
-		Printf.fprintf oc "class_map\n{:d}\n" num_classes;
-		let sorted_list = List.sort (
-			fun Class(name, _, _) Class(name2, _, _) ->
-				compare name name2) class_list in
-		List.iter (print_cm_class oc sorted_list) sorted_list;
+                let class_list = add_names (List.map cm_class_list class_list) in
+		let sorted_list = List.sort (fun a b -> match (a, b) with 
+                                                (CM_CLASS(name, _, _), CM_CLASS(name2, _, _)) -> 
+                                                compare name name2
+                                                | (_, _) -> 0) class_list in
+                (* add inherited attrs *)
+                CM(sorted_list)
 |   _ -> 
 		(* Ignore everything else *)
-		() *)
+		CM([]) 
 
 
 
@@ -525,6 +540,34 @@ let rec print_class_list class_list oc = match class_list with
 	|   _ -> Printf.fprintf oc "NOT A CLASS"
 ;;
 
+
+let print_cm_attr oc feat = match feat with
+        ATTRIBUTE(ident, typ, None) -> 
+							Printf.fprintf oc "no_initializer\n";
+                                                        let IDENT(ln, name) = ident in
+                                                        let IDENT(ln, typ) = typ in
+                                                        Printf.fprintf oc "%s\n" name;
+                                                        Printf.fprintf oc "%s\n" typ;
+    |   ATTRIBUTE(ident, typ, Some(expr)) ->
+	 						Printf.fprintf oc "initializer\n";
+                                                        let IDENT(ln, name) = ident in
+                                                        let IDENT(ln, typ) = typ in
+                                                        Printf.fprintf oc "%s\n" name;
+                                                        Printf.fprintf oc "%s\n" typ;
+                                                        print_expr oc expr
+    ;;
+
+let print_class_map class_map oc = match class_map with
+        CM(class_list) -> 
+            Printf.fprintf oc "class_map\n";
+            Printf.fprintf oc "%d\n" (List.length class_list);
+            (List.map (fun cm_class -> match cm_class with 
+                                                  CM_CLASS(name, _, feats) ->
+                                                      Printf.fprintf oc "%s\n" name;
+                                                      List.map (print_cm_attr oc) feats
+                                                  ))
+        ;;
+
 let rec print_ast ast oc = match ast with
 	PROGRAM(num_classes, class_list) -> 
 				Printf.fprintf oc "%d\n" num_classes;
@@ -537,6 +580,7 @@ let filename = match Array.length (Sys.argv) with
 	|   _ -> failwith "Please provide a single file command line arguments"
 ;;
 
+         
 
 let lines = ref [] in
 let in_file = open_in filename in
@@ -554,7 +598,9 @@ with
 	(* Open output file, returning a channel to write to *)
 	let file = "out.cl-ast" in
 	let oc = open_out file in
-	print_ast p oc;
+        let classMap = class_map p in 
+        print_class_map classMap oc;
+(*	print_ast p oc; *)
 	close_out oc;
 end
 	
