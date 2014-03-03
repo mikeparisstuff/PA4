@@ -3,10 +3,8 @@
 (* ANI: identifier = identifier, typ = type *)
 type identifier = IDENT of int * string
 
-                           (* name, inherits from, attribute   *)
-and cm_class = CM_CLASS of string * string option * feature list
 
-and cm = CM of cm_class list
+and cm = CM of clas list
 
 (*                    name of formal, type of formal *)
 and formals = FORMAL of identifier * identifier
@@ -55,6 +53,7 @@ and clas = CLASS of identifier * identifier option * int * feature list
 (* number of classes, class list *)
 and program = PROGRAM of int * clas list;;
 
+let failure line_no message = print_endline (Printf.sprintf ("ERROR: %d: Type-Check: %s") line_no message)
 
 (****************************  BUILD THE AST FROM FILE  ************************************)
 let rec binding_list lines num_bindings = match num_bindings with
@@ -83,7 +82,8 @@ and expr_list lines num_exprs = match num_exprs with
 and build_identifier lines = match lines with
 	line_no :: ident :: lines ->
 		(lines, IDENT((int_of_string line_no), ident))
-|	[] -> ([], IDENT(0, "NOT GOOD"))
+|	_ -> failure 0 "badtree";
+             ([], IDENT(0, ""))
 
 and case_element_list lines num_elems = match num_elems with
 	0 -> (lines, [])
@@ -95,37 +95,39 @@ and case_element_list lines num_elems = match num_elems with
 			let line_num = int_of_string line_no
 			and typ_line_num = int_of_string typ_line_no in
 			(rem_lines, CE( IDENT(line_num, name), IDENT(typ_line_num, typ), expr ) :: elem_list)
+                | _ -> failure 0 "badtree"; ([], [])
 
 and build_expr lines = match lines with
-	line_no :: "integer" :: num :: rem_lines -> 
+    line_no :: "integer" :: num :: rem_lines -> 
 		(rem_lines, INT((int_of_string line_no), (int_of_string num)))
-|	line_no :: "string" :: word :: rem_lines ->
+|   line_no :: "string" :: word :: rem_lines ->
 		(rem_lines, STRING( (int_of_string line_no), word))
 |   line_no :: "assign" :: iden_line_no :: name :: lines  ->
 		let (rem_lines, expr) = build_expr lines in
 		let line_num = int_of_string line_no
 		and iden_line_num = int_of_string iden_line_no in
 		( rem_lines, ASSIGN( line_num, IDENT(iden_line_num, name), expr) )
-| 	line_no :: "let" :: num_bindings :: lines ->
+|   line_no :: "let" :: num_bindings :: lines ->
 		let (rem_lines, bindings) = binding_list lines (int_of_string num_bindings) in
 		let (rem_lines, expr) = build_expr rem_lines in
 		let line_num = int_of_string line_no in
 		( rem_lines, LET(line_num, bindings, expr) )
 |   line_no :: "case" :: lines -> 
 		let (rem_lines, expr) = build_expr lines in
-		let num_elems :: rem = rem_lines in
+		let num_elems  = List.hd rem_lines in
+                let rem = List.tl rem_lines in
 		let (rem_lines, case_elements) = case_element_list rem (int_of_string num_elems) in
 		( rem_lines, CASE( (int_of_string line_no), expr, case_elements ))
-| 	line_no :: "if" :: lines ->
+|   line_no :: "if" :: lines ->
 		let (rem_lines, expr) = build_expr lines in
 		let (rem_lines, expr1) = build_expr rem_lines in
 		let (rem_lines, expr2) = build_expr rem_lines in
 		(rem_lines, IF_ELSE( (int_of_string line_no), expr, expr1, expr2 ) )
-| 	line_no :: "le" :: lines ->
+|   line_no :: "le" :: lines ->
 		let (rem_lines, expr) = build_expr lines in
 		let (rem_lines, expr2) = build_expr rem_lines in
 		(rem_lines, LE( (int_of_string line_no), expr, expr2 ) )
-| 	line_no :: "identifier" :: ident_line_no :: ident :: lines ->
+|   line_no :: "identifier" :: ident_line_no :: ident :: lines ->
 		let line_num = int_of_string line_no
 		and ident_line_num = int_of_string ident_line_no in
 		(lines, IDENTIFIER( line_num, IDENT( ident_line_num, ident) ) )
@@ -134,7 +136,7 @@ and build_expr lines = match lines with
 		let (rem_lines, expr2) = build_expr rem_lines
 		and line_num = int_of_string line_no in
 		(rem_lines, WHILE(line_num, expr, expr2) )
-| 	line_no :: "block" :: num_exprs :: lines ->
+|   line_no :: "block" :: num_exprs :: lines ->
 		let (rem_lines, exprs) = expr_list lines (int_of_string num_exprs) in
 		let line_num = int_of_string line_no in
 		(rem_lines, BLOCK( line_num, exprs ))
@@ -163,11 +165,6 @@ and build_expr lines = match lines with
 		let (rem_lines, rhs) = build_expr rem_lines in
 		let line_num = int_of_string line_no in
 		(rem_lines, LT( line_num, lhs, rhs ))
-|   line_no :: "le" :: lines -> 
-		let (rem_lines, lhs) = build_expr lines in
-		let (rem_lines, rhs) = build_expr rem_lines in
-		let line_num = int_of_string line_no in
-		(rem_lines, LE( line_num, lhs, rhs ))
 |   line_no :: "eq" :: lines -> 
 		let (rem_lines, lhs) = build_expr lines in
 		let (rem_lines, rhs) = build_expr rem_lines in
@@ -185,7 +182,7 @@ and build_expr lines = match lines with
 		let (rem_lines, expr) = build_expr lines in
 		let line_num = int_of_string line_no in
 		(rem_lines, ISVOID( line_num, expr ))
-| 	line_no :: "new" :: ident_no :: ident :: lines ->
+|   line_no :: "new" :: ident_no :: ident :: lines ->
 		let line_num = int_of_string line_no 
 		and ident_line_num = int_of_string ident_no in
 		(lines, NEW( line_num, IDENT(ident_line_num, ident)))
@@ -203,7 +200,7 @@ and build_expr lines = match lines with
 |   line_no :: "dynamic_dispatch" :: lines -> 
 		let (rem_lines, expr) = build_expr lines in
 		let (rem_lines, ident) = build_identifier rem_lines in
-		let num_exprs :: rem_lines = rem_lines in
+		let num_exprs = List.hd rem_lines in
 		let (rem_lines, exprs) = expr_list rem_lines (int_of_string num_exprs) in
 		let line_num = int_of_string line_no in
 		(rem_lines, DYN_DISPATCH(line_num, expr, ident, exprs))
@@ -219,7 +216,8 @@ and build_expr lines = match lines with
 		let (rem_lines, expr) = build_expr lines in
 		let (rem_lines, ident1) = build_identifier rem_lines in
 		let (rem_lines, ident2) = build_identifier rem_lines in
-		let num_exprs :: rem_lines = rem_lines in
+		let num_exprs = List.hd rem_lines in
+                let rem_lines = List.tl rem_lines in
 		let (rem_lines, exprs) = expr_list rem_lines (int_of_string num_exprs) in
 		let line_num = int_of_string line_no in
 		(rem_lines, STAT_DISPATCH(line_num, expr, ident1, ident2, exprs))
@@ -244,7 +242,7 @@ let rec formal_list lines num_formals = match num_formals with
 				and type_line_num = int_of_string type_line_no in
 				(rem, FORMAL( IDENT(line_num, name), IDENT(type_line_num, type_name) ) :: formals ) 
 			end
-		|	[] -> ([], [])
+                |	_ -> failure 0 "badtree"; ([], [])
 ;;
 
 let rec feature_list lines num_features = match num_features with
@@ -296,27 +294,20 @@ let ast lst = match lst with
 |   [] -> PROGRAM(0, []);;
 
 
-(*******************************  CLASS MAP METHODS IGNORE THIS ************************************)
 
-(*
-let rec print_inherited_attributes oc name class_list=
-	for i = 0 to List.length class_list do
-		match List.nth class_list i with
-			CLASS( name, Some(typ), num_feats, feats) ->
-				(* Print superclass. Output this class' attributes *)
-				print_inherited_attributes oc typ class_list;
-				List.iter (print_cm_attribute oc) feats;
-		|   CLASS( name, None, num_feats, feats) -> 
-				(* Found the highest ancestor. Output attributes *)
-				List.iter (print_cm_attribute oc) feats;
-		|   _ ->
-			    (* Not an anscestor continue *)
-			    ()
-	done *)
+(************************* CLASS MAP BUILDING ***************************)
+let ai typ = IDENT(0, typ)
+
+let obj = Some(ai "Object") ;;
+(* predefined classes in cool *)
+let predefd = [CLASS(ai "Bool", obj, 0, []); CLASS(ai "Int", obj, 0, []); 
+              CLASS(ai "Object", None, 0, []); CLASS(ai "String", obj, 0, []);
+              CLASS(ai "IO", obj, 0, [])] ;;
 
 let rec cm_attribute feat_list = match feat_list with
-     [] -> []
-|    ATTRIBUTE( name, typ, Some(expr)) :: tl ->
+    [] -> []
+
+|   ATTRIBUTE( name, typ, Some(expr)) :: tl ->
 		(* Add this attribute and print as initializer*)
                 ATTRIBUTE(name, typ, Some(expr)) :: (cm_attribute tl)
 
@@ -329,37 +320,30 @@ let rec cm_attribute feat_list = match feat_list with
 
 and cm_class_list ast = match ast with
 	CLASS( name, Some(typ), num_feats, feats) ->
-               let IDENT(ln, name) = name in
-               let IDENT(ln, inherits) = typ in
-	       CM_CLASS(name, Some(inherits), (cm_attribute feats))
+	       CLASS(name, Some(typ), num_feats, (cm_attribute feats))
 
     |   CLASS( name, None, num_feats, feats) -> 
-               let IDENT(ln, name) = name in
-               CM_CLASS(name, Some("Object"), (cm_attribute feats))
-    |   _ -> 
-		(* Ignore everything else *)
-	       CM_CLASS("NEVEREVEREVERGETHERE", None, [])
+               CLASS(name, obj, num_feats, (cm_attribute feats))
 
-and add_names class_list = 
-               let obj = Some("Object") in
-               let predefd = [CM_CLASS("Bool", obj, []); CM_CLASS("Int", obj,[]); 
-                              CM_CLASS("Object", None, []); CM_CLASS("String", obj, []);
-                              CM_CLASS("IO", obj, [])] in
-               class_list @ predefd
 
-and class_map ast= match ast with
-	PROGRAM( num_classes, class_list ) -> 
-		(* Add this class node to the class map *)
-                let class_list = add_names (List.map cm_class_list class_list) in
-		let sorted_list = List.sort (fun a b -> match (a, b) with 
-                                                (CM_CLASS(name, _, _), CM_CLASS(name2, _, _)) -> 
-                                                compare name name2
-                                                | (_, _) -> 0) class_list in
-                (* add inherited attrs *)
-                CM(sorted_list)
-|   _ -> 
-		(* Ignore everything else *)
-        CM([]);; 
+and add_check_names class_list = 
+                let class_names = List.map (fun c -> 
+                                                let CLASS(ident, _, _, _) = c in
+                                                let IDENT(ln, name) = ident in name
+                                           )
+                                           class_list in
+                if not (List.mem "Main" class_names) then failure 0 "class Main not found";
+                class_list @ predefd
+
+and class_map ast = 
+    let PROGRAM(num_classes, class_list) = ast in
+    (* Add this class node to the class map *)
+    let class_list = add_check_names (List.map cm_class_list class_list) in
+    let sorted_list = List.sort (fun a b -> match (a, b) with 
+                                                (CLASS(name, _, _, _), CLASS(name2, _, _, _)) ->  compare name name2
+                                            ) class_list in
+     (* add inherited attrs *)
+     CM(sorted_list)  ;;
 
 
 
@@ -373,7 +357,6 @@ let print_identifier ident oc = match ident with
 			Printf.fprintf oc "%d\n%s\n" line_no str;
 			(* Printf.printf "%d\n%s\n" line_no str *)
 
-|   _ -> Printf.fprintf oc "NOT IDENTIFIER"
 ;;
 
 let rec print_bindings bindings oc = match bindings with
@@ -389,7 +372,6 @@ let rec print_bindings bindings oc = match bindings with
 				print_identifier typ oc;
 				print_expr oc expr;
 				print_bindings tl oc;
-|   _ -> ()
 
 and print_case_elements elems oc = match elems with
 	[] -> ()
@@ -430,7 +412,7 @@ and print_expr oc expr = match expr with
 					Printf.fprintf oc "%d\nassign\n" line_no;
 					print_identifier ident oc;
 					print_expr oc expr;
-| 	LET (line_no, bindings, expr) ->
+|   LET (line_no, bindings, expr) ->
 					Printf.fprintf oc "%d\nlet\n%d\n" line_no (List.length bindings);
 					print_bindings bindings oc;
 					print_expr oc expr;
@@ -443,7 +425,7 @@ and print_expr oc expr = match expr with
 					Printf.fprintf oc "%d\nwhile\n" line_no;
 					print_expr oc expr;
 					print_expr oc expr1;
-| 	BLOCK (line_no, exprs) ->
+|   BLOCK (line_no, exprs) ->
 					Printf.fprintf oc "%d\nblock\n%d\n" line_no (List.length exprs);
 					List.iter (print_expr oc) exprs;
 |   IDENTIFIER (line_no, ident) -> 
@@ -465,7 +447,7 @@ and print_expr oc expr = match expr with
 					Printf.fprintf oc "%d\ndivide\n" line_no;
 					print_expr oc lhs;
 					print_expr oc rhs;
-| 	LT (line_no, lhs, rhs) ->
+|   LT (line_no, lhs, rhs) ->
 					Printf.fprintf oc "%d\nlt\n" line_no;
 					print_expr oc lhs;
 					print_expr oc rhs;
@@ -498,14 +480,14 @@ and print_expr oc expr = match expr with
 let print_formal oc formal = match formal with
 	FORMAL(a, b) -> 
 		print_identifier a oc;
-		print_identifier b oc;
-|	_ 	-> print_string "INVALID FORMAL"
+                print_identifier b oc;
+;;
 
 
 let rec print_feature_list feat_list oc = match feat_list with
 	[] -> ()
 |   hd :: tl -> match hd with
-		ATTRIBUTE(ident, typ, None) -> 
+            ATTRIBUTE(ident, typ, None) -> 
 							Printf.fprintf oc "attribute_no_init\n";
 							print_identifier ident oc;
 							print_identifier typ oc;
@@ -524,29 +506,28 @@ let rec print_feature_list feat_list oc = match feat_list with
 							print_identifier typ oc;
 							print_expr oc expr;
 							print_feature_list tl oc;
-	|   _ -> Printf.fprintf oc "NOT ATTRIBUTE"
 ;;
 
 let rec print_class_list class_list oc = match class_list with
 	[] -> ()
-|   hd :: tl -> match hd with
-		CLASS(ident, None, num_features, feat_list) -> 
-									print_identifier ident oc;
-									Printf.fprintf oc "no_inherits\n";
-									Printf.fprintf oc "%d\n" num_features;
-									print_feature_list feat_list oc;
-									print_class_list tl oc;
+        |   hd :: tl -> match hd with
+            CLASS(ident, None, num_features, feat_list) -> 
+                                                        print_identifier ident oc;
+                                                        Printf.fprintf oc "no_inherits\n";
+                                                        Printf.fprintf oc "%d\n" num_features;
+                                                        print_feature_list feat_list oc;
+                                                        print_class_list tl oc;
 	|   CLASS(ident, Some(inher), num_features, feat_list) -> 
-									print_identifier ident oc;
-									Printf.fprintf oc "inherits\n";
-									print_identifier inher oc;
-									Printf.fprintf oc "%d\n" num_features;
-									print_feature_list feat_list oc;
-									print_class_list tl oc;
-	|   _ -> Printf.fprintf oc "NOT A CLASS"
+                                                        print_identifier ident oc;
+                                                        Printf.fprintf oc "inherits\n";
+                                                        print_identifier inher oc;
+                                                        Printf.fprintf oc "%d\n" num_features;
+                                                        print_feature_list feat_list oc;
+                                                        print_class_list tl oc;
 ;;
 
 
+(**************************** CLASS MAP PRINTING ***************************)
 let print_cm_attr oc feat = match feat with
         ATTRIBUTE(ident, typ, None) -> 
 							Printf.fprintf oc "no_initializer\n";
@@ -560,27 +541,27 @@ let print_cm_attr oc feat = match feat with
                                                         let IDENT(ln, typ) = typ in
                                                         Printf.fprintf oc "%s\n" name;
                                                         Printf.fprintf oc "%s\n" typ;
-                                                        print_expr oc expr
+                                                        print_expr oc expr;
+    (* if method do nothing! *)
+    |   _ -> ()
     ;;
 
-let print_class_map class_map oc = match class_map with
-        CM(class_list) -> 
-            Printf.fprintf oc "class_map\n";
-            Printf.fprintf oc "%d\n" (List.length class_list);
-            (List.map (fun cm_class -> match cm_class with 
-                                                  CM_CLASS(name, _, feats) ->
-                                                      Printf.fprintf oc
-                                                      "%s\n%d\n" name
-                                                      (List.length feats);
-                                                      List.map (print_cm_attr oc) feats
-                                                  ) class_list)
-        ;;
+let print_class_map class_map oc = match class_map with 
+    CM(class_list) ->
+        Printf.fprintf oc "class_map\n";
+        Printf.fprintf oc "%d\n" (List.length class_list);
+        List.map (fun cm_class -> match cm_class with 
+                                              CLASS(name_i, _, _, feats) ->
+                                                  let IDENT(_, name) = name_i in
+                                                  Printf.fprintf oc "%s\n%d\n" name (List.length feats);
+                                                  List.map (print_cm_attr oc) feats;
+                 ) class_list;
+;;
 
 let rec print_ast ast oc = match ast with
 	PROGRAM(num_classes, class_list) -> 
 				Printf.fprintf oc "%d\n" num_classes;
 				print_class_list class_list oc;
-|   _ -> Printf.fprintf oc "NOT A PROGRAM"
 ;;
 
 let filename = match Array.length (Sys.argv) with
@@ -607,8 +588,9 @@ with
 	let file = "out.cl-ast" in
 	let oc = open_out file in
         let classMap = class_map p in 
-        print_class_map classMap oc;
-(*	print_ast p oc; *)
+        (* since print_class_map has side-effects we must ignore it *)
+        ignore(print_class_map classMap oc);
+	print_ast p oc; 
 	close_out oc;
 end
 	
