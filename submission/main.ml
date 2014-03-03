@@ -82,8 +82,9 @@ and expr_list lines num_exprs = match num_exprs with
 and build_identifier lines = match lines with
 	line_no :: ident :: lines ->
 		(lines, IDENT((int_of_string line_no), ident))
-|	_ -> failure 0 "badtree";
-             ([], IDENT(0, ""))
+|	_ -> 
+		failure 0 "badtree";
+        (lines, IDENT(0, ""))
 
 and case_element_list lines num_elems = match num_elems with
 	0 -> (lines, [])
@@ -95,7 +96,9 @@ and case_element_list lines num_elems = match num_elems with
 			let line_num = int_of_string line_no
 			and typ_line_num = int_of_string typ_line_no in
 			(rem_lines, CE( IDENT(line_num, name), IDENT(typ_line_num, typ), expr ) :: elem_list)
-                | _ -> failure 0 "badtree"; ([], [])
+        | _ -> 
+        	failure 0 "badtree"; 
+        	(lines, [])
 
 and build_expr lines = match lines with
     line_no :: "integer" :: num :: rem_lines -> 
@@ -115,7 +118,7 @@ and build_expr lines = match lines with
 |   line_no :: "case" :: lines -> 
 		let (rem_lines, expr) = build_expr lines in
 		let num_elems  = List.hd rem_lines in
-                let rem = List.tl rem_lines in
+        let rem = List.tl rem_lines in
 		let (rem_lines, case_elements) = case_element_list rem (int_of_string num_elems) in
 		( rem_lines, CASE( (int_of_string line_no), expr, case_elements ))
 |   line_no :: "if" :: lines ->
@@ -123,10 +126,6 @@ and build_expr lines = match lines with
 		let (rem_lines, expr1) = build_expr rem_lines in
 		let (rem_lines, expr2) = build_expr rem_lines in
 		(rem_lines, IF_ELSE( (int_of_string line_no), expr, expr1, expr2 ) )
-|   line_no :: "le" :: lines ->
-		let (rem_lines, expr) = build_expr lines in
-		let (rem_lines, expr2) = build_expr rem_lines in
-		(rem_lines, LE( (int_of_string line_no), expr, expr2 ) )
 |   line_no :: "identifier" :: ident_line_no :: ident :: lines ->
 		let line_num = int_of_string line_no
 		and ident_line_num = int_of_string ident_line_no in
@@ -165,6 +164,11 @@ and build_expr lines = match lines with
 		let (rem_lines, rhs) = build_expr rem_lines in
 		let line_num = int_of_string line_no in
 		(rem_lines, LT( line_num, lhs, rhs ))
+|   line_no :: "le" :: lines -> 
+		let (rem_lines, lhs) = build_expr lines in
+		let (rem_lines, rhs) = build_expr rem_lines in
+		let line_num = int_of_string line_no in
+		(rem_lines, LE( line_num, lhs, rhs ))
 |   line_no :: "eq" :: lines -> 
 		let (rem_lines, lhs) = build_expr lines in
 		let (rem_lines, rhs) = build_expr rem_lines in
@@ -201,35 +205,20 @@ and build_expr lines = match lines with
 		let (rem_lines, expr) = build_expr lines in
 		let (rem_lines, ident) = build_identifier rem_lines in
 		let num_exprs = List.hd rem_lines in
+		let rem_lines = List.tl rem_lines in
 		let (rem_lines, exprs) = expr_list rem_lines (int_of_string num_exprs) in
 		let line_num = int_of_string line_no in
 		(rem_lines, DYN_DISPATCH(line_num, expr, ident, exprs))
-		(* match rem_lines with
-			ident_line_no :: ident :: num_exprs :: lines ->
-				let (rem_lines, exprs) = expr_list lines (int_of_string num_exprs) in
-				let line_num = int_of_string line_no 
-				and ident_line_num = int_of_string ident_line_no in
-				(rem_lines, DYN_DISPATCH(line_num, expr, IDENT(ident_line_num, ident), exprs))
-		|   [] -> (rem_lines, DYN_DISPATCH(0, expr, IDENT(0, ""), [])) *)
 |   line_no :: "static_dispatch" :: lines -> 
 
 		let (rem_lines, expr) = build_expr lines in
 		let (rem_lines, ident1) = build_identifier rem_lines in
 		let (rem_lines, ident2) = build_identifier rem_lines in
 		let num_exprs = List.hd rem_lines in
-                let rem_lines = List.tl rem_lines in
+        let rem_lines = List.tl rem_lines in
 		let (rem_lines, exprs) = expr_list rem_lines (int_of_string num_exprs) in
 		let line_num = int_of_string line_no in
 		(rem_lines, STAT_DISPATCH(line_num, expr, ident1, ident2, exprs))
-
-		(* match rem_lines with
-			typ_line_no :: typ :: method_line_no :: meth :: num_exprs :: lines ->
-				let (rem_lines, exprs) = expr_list lines (int_of_string num_exprs) in
-				let typ_line_num = int_of_string typ_line_no
-				and method_line_num = int_of_string method_line_no
-				and line_num = int_of_string line_no in
-				(rem_lines, STAT_DISPATCH(line_num, expr, IDENT(typ_line_num, typ), IDENT(method_line_num, meth), exprs))
-		|   [] -> (rem_lines, STAT_DISPATCH(0, expr, IDENT(0, ""), IDENT(0, ""), [])) *)
 |   _ -> ([], STRING(0, "DIFFERENT EXPRESSION"))
 ;;
 
@@ -345,6 +334,8 @@ and class_map ast =
      (* add inherited attrs *)
      CM(sorted_list)  ;;
 
+(******************************* TYPE CHECKING METHODS *****************************)
+(* let check_if_inherits_int ast  *)
 
 
 
@@ -585,12 +576,13 @@ with
 	let p = ast cool_input in
 
 	(* Open output file, returning a channel to write to *)
-	let file = "out.cl-type" in
+	let f_l = Str.split (Str.regexp "[.]") filename in
+	let file = (List.hd f_l) ^ ".cl-type" in
 	let oc = open_out file in
         let classMap = class_map p in 
         (* since print_class_map has side-effects we must ignore it *)
         ignore(print_class_map classMap oc);
-	print_ast p oc; 
+	(* print_ast p oc;  *)
 	close_out oc;
 end
 	

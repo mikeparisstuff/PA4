@@ -6,8 +6,9 @@ $(PROGRAM_NAME): $(PROGRAM_NAME).ml
 	ocamlc str.cma $(PROGRAM_NAME).ml
 
 run: ${PROGRAM_NAME}
-	./a.out ${f}
+	./a.out ${f}.cl-ast
 
 test: ${PROGRAM_NAME}
-	./a.out ${f}
-	diff -b -B -E -w out.cl-ast ${f}
+	./cool --class-map --out out ${f}.cl
+	./a.out ${f}.cl-ast
+	diff -b -B -E -w out.cl-type ${f}.cl-type

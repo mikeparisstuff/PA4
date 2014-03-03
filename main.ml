@@ -329,7 +329,9 @@ and class_map ast =
     (* Add this class node to the class map *)
     let class_list = add_check_names (List.map cm_class_list class_list) in
     let sorted_list = List.sort (fun a b -> match (a, b) with 
-                                                (CLASS(name, _, _, _), CLASS(name2, _, _, _)) ->  compare name name2
+                                                (CLASS(name, _, _, _), CLASS(name2, _, _, _)) -> match (name, name2) with
+                                                	(IDENT(c,d), IDENT(x,y)) -> compare d y
+                                                |  _ -> 0
                                             ) class_list in
      (* add inherited attrs *)
      CM(sorted_list)  ;;
