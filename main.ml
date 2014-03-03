@@ -335,12 +335,17 @@ and cm_class_list ast = match ast with
 
     |   CLASS( name, None, num_feats, feats) -> 
                let IDENT(ln, name) = name in
-               CM_CLASS(name, None, (cm_attribute feats))
+               CM_CLASS(name, Some("Object"), (cm_attribute feats))
     |   _ -> 
 		(* Ignore everything else *)
 	       CM_CLASS("NEVEREVEREVERGETHERE", None, [])
 
-and add_names class_list = class_list
+and add_names class_list = 
+               let obj = Some("Object") in
+               let predefd = [CM_CLASS("Bool", obj, []); CM_CLASS("Int", obj,[]); 
+                              CM_CLASS("Object", None, []); CM_CLASS("String", obj, []);
+                              CM_CLASS("IO", obj, [])] in
+               class_list @ predefd
 
 and class_map ast= match ast with
 	PROGRAM( num_classes, class_list ) -> 
@@ -354,7 +359,8 @@ and class_map ast= match ast with
                 CM(sorted_list)
 |   _ -> 
 		(* Ignore everything else *)
-		CM([]) 
+        CM([]);; 
+
 
 
 
@@ -563,7 +569,9 @@ let print_class_map class_map oc = match class_map with
             Printf.fprintf oc "%d\n" (List.length class_list);
             (List.map (fun cm_class -> match cm_class with 
                                                   CM_CLASS(name, _, feats) ->
-                                                      Printf.fprintf oc "%s\n" name;
+                                                      Printf.fprintf oc
+                                                      "%s\n%d\n" name
+                                                      (List.length feats);
                                                       List.map (print_cm_attr oc) feats
                                                   ) class_list)
         ;;
