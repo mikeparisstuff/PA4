@@ -1,4 +1,5 @@
 (* type 'a mult_node = T of 'a * 'a mult_node;; *)
+open Topo;;
 
 (* ANI: identifier = identifier, typ = type *)
 type identifier = IDENT of int * string
@@ -53,7 +54,10 @@ and clas = CLASS of identifier * identifier option * int * feature list
 (* number of classes, class list *)
 and program = PROGRAM of int * clas list;;
 
-let failure line_no message = print_endline (Printf.sprintf ("ERROR: %d: Type-Check: %s") line_no message)
+let failure line_no message = 
+            print_endline (Printf.sprintf ("ERROR: %d: Type-Check: %s") line_no message);
+            (* To fool our compilier! *)
+            ignore(exit 0)
 
 (****************************  BUILD THE AST FROM FILE  ************************************)
 let rec binding_list lines num_bindings = match num_bindings with
@@ -318,23 +322,45 @@ and cm_class_list ast = match ast with
 and add_check_names class_list = 
                 let class_names = List.map (fun c -> 
                                                 let CLASS(ident, _, _, _) = c in
-                                                let IDENT(ln, name) = ident in name
-                                           )
+                                                let IDENT(ln, name) = ident in name)
                                            class_list in
+                (* check for main definition *)
                 if not (List.mem "Main" class_names) then failure 0 "class Main not found";
+                (* check for duplicate classes *)
+                let uniques = [] in
+                ignore(List.fold_left (fun uniques cls ->
+                                let CLASS(IDENT(ln, name), _, _, _) = cls in
+                                if List.mem name uniques then failure ln "Class name is duplicated";
+                                name::uniques
+                ) uniques class_list);
+                (* check for non-existent classes that are inherited *) 
+                (* check for classes that inherit from reserved *)
                 class_list @ predefd
 
 and class_map ast = 
     let PROGRAM(num_classes, class_list) = ast in
     (* Add this class node to the class map *)
     let class_list = add_check_names (List.map cm_class_list class_list) in
+    (* at this point all classnames should be unique *)
     let sorted_list = List.sort (fun a b -> match (a, b) with 
                                                 (CLASS(name, _, _, _), CLASS(name2, _, _, _)) -> match (name, name2) with
                                                 	(IDENT(c,d), IDENT(x,y)) -> compare d y
-                                                |  _ -> 0
                                             ) class_list in
-     (* add inherited attrs *)
-     CM(sorted_list)  ;;
+    (* still need to add inherited attrs, but first! topo-sorting *)
+    (* the list of edges to pass into topo *)
+    let edges_to_sort = List.map (fun cls -> let CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, _) = cls in
+                                             [name; inherits]) 
+                                   (* filtering out Object before we sort *)
+                                 (List.filter (fun cls -> let CLASS(IDENT(_, name), _, _, _) = cls in
+                                                          not (name = "Object")) class_list)
+    in
+    let order = Topo.topoSort edges_to_sort in
+    if (List.length order) < 1 then failure 0 "Class hierarchy contains an inheritance cycle";
+    (* here we can add attributes to class node *)
+
+
+    List.iter print_endline order;
+    PROGRAM(num_classes, sorted_list)  ;;
 
 (******************************* TYPE CHECKING METHODS *****************************)
 (* let check_if_inherits_int ast  *)
@@ -348,8 +374,6 @@ let print_list lst = List.iter (fun a -> print_string (a ^ "\n")) lst;;
 let print_identifier ident oc = match ident with
 	IDENT(line_no, str) -> 
 			Printf.fprintf oc "%d\n%s\n" line_no str;
-			(* Printf.printf "%d\n%s\n" line_no str *)
-
 ;;
 
 let rec print_bindings bindings oc = match bindings with
@@ -540,7 +564,7 @@ let print_cm_attr oc feat = match feat with
     ;;
 
 let print_class_map class_map oc = match class_map with 
-    CM(class_list) ->
+    PROGRAM(_, class_list) ->
         Printf.fprintf oc "class_map\n";
         Printf.fprintf oc "%d\n" (List.length class_list);
         List.map (fun cm_class -> match cm_class with 
@@ -563,7 +587,6 @@ let filename = match Array.length (Sys.argv) with
 ;;
 
          
-
 let lines = ref [] in
 let in_file = open_in filename in
 try
