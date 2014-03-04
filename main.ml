@@ -1,5 +1,5 @@
 (* type 'a mult_node = T of 'a * 'a mult_node;; *)
-open Topo;;
+module ClassMap = Map.Make(String)
 
 (* ANI: identifier = identifier, typ = type *)
 type identifier = IDENT of int * string
@@ -28,8 +28,7 @@ and expr = INT of int * int
 	| BLOCK of int * expr list
 	| NEW of int * identifier
 	| ISVOID of int * expr
-	| PLUS of int * expr * expr
-	| MINUS of int * expr * expr
+	| PLUS of int * expr * expr | MINUS of int * expr * expr
 	| TIMES of int * expr * expr
 	| DIVIDE of int * expr * expr
 	| LT of int * expr * expr
@@ -357,10 +356,20 @@ and class_map ast =
     let order = Topo.topoSort edges_to_sort in
     if (List.length order) < 1 then failure 0 "Class hierarchy contains an inheritance cycle";
     (* here we can add attributes to class node *)
-
-
-    List.iter print_endline order;
-    PROGRAM(num_classes, sorted_list)  ;;
+    let order = List.map (fun str -> List.find (fun c_node -> let CLASS(IDENT(_, name), _, _, _) = c_node in
+                                                              str = name) 
+                                     sorted_list) order in
+    let cmap = List.fold_left (fun cm cls -> match cls with
+                                   CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, attr_list) -> 
+                                        let ih_attr_list = ClassMap.find inherits cm in
+                                        ClassMap.add name (ih_attr_list @ attr_list) cm
+                                 | CLASS(IDENT(_, name), None, _, attr_list) ->
+                                        ClassMap.add name attr_list cm
+                        )
+                        ClassMap.empty
+                        order in
+    ClassMap.iter (fun k b -> print_endline k) cmap;
+    cmap;;
 
 (******************************* TYPE CHECKING METHODS *****************************)
 (* let check_if_inherits_int ast  *)
@@ -563,16 +572,14 @@ let print_cm_attr oc feat = match feat with
     |   _ -> ()
     ;;
 
-let print_class_map class_map oc = match class_map with 
-    PROGRAM(_, class_list) ->
-        Printf.fprintf oc "class_map\n";
-        Printf.fprintf oc "%d\n" (List.length class_list);
-        List.map (fun cm_class -> match cm_class with 
-                                              CLASS(name_i, _, _, feats) ->
-                                                  let IDENT(_, name) = name_i in
-                                                  Printf.fprintf oc "%s\n%d\n" name (List.length feats);
-                                                  List.map (print_cm_attr oc) feats;
-                 ) class_list;
+let print_class_map class_map oc = 
+    Printf.fprintf oc "class_map\n";
+    Printf.fprintf oc "%d\n" (ClassMap.cardinal class_map);
+    ClassMap.iter (fun cname feat_list ->
+                        Printf.fprintf oc "%s\n"cname ;
+                        Printf.fprintf oc "%d\n" (List.length feat_list);
+                        ignore(List.map (fun feat -> print_cm_attr oc feat) feat_list); 
+                  ) class_map;
 ;;
 
 let rec print_ast ast oc = match ast with
