@@ -71,8 +71,6 @@ let topoSort input_list =
 
 
 
-
-
 (***********************  PA 4 ********************************)
 
 
@@ -409,8 +407,25 @@ and add_check_names class_list =
                                 if List.mem name uniques then failure ln "Class name is duplicated";
                                 name::uniques
                 ) uniques class_list);
+
+                (* check for classes that overwrite or inherit from Int, String, or Bool *)
+                let non_inheritables = ["Int"; "String"; "Bool"] in
+                List.iter (fun cls ->
+                			let CLASS(IDENT(ln, name), Some(IDENT(tln, typ)), _, _) = cls in
+                			if List.mem name non_inheritables then failure ln "Cannot redefine class Int, String, or Bool"
+                			else if List.mem typ non_inheritables then failure tln "Cannot inherit from class Int, String, or Bool";
+               	) class_list;
+
                 (* check for non-existent classes that are inherited *) 
-                (* check for classes that inherit from reserved *)
+                let known_classes = (List.map (fun cls -> 
+                				let CLASS(IDENT(ln, name), _, _, _) = cls in
+                				name) class_list) @ ["IO"; "Object"] in
+                List.iter (fun cls ->
+                			let CLASS(IDENT(ln, name), Some(IDENT(tln, typ)), _, _) = cls in
+                			(* CHECK IF THIS SHOULD FAIL ON LINE OF NAME OR TYP *)
+                			if not (List.mem typ known_classes) then failure ln "Inheriting from unbound class";
+                ) class_list;
+
                 class_list @ predefd
 
 and class_map ast = 

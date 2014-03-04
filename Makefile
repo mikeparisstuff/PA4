@@ -3,7 +3,7 @@ PROGRAM_NAME = main
 all: $(PROGRAM_NAME)
 
 $(PROGRAM_NAME): $(PROGRAM_NAME).ml
-	ocamlc str.cma topo.ml $(PROGRAM_NAME).ml
+	ocamlc str.cma $(PROGRAM_NAME).ml
 
 run: ${PROGRAM_NAME}
 	./a.out ${f}.cl-ast
