@@ -1,8 +1,86 @@
+(************************ TOPOLOGICAL SORT  *******************************)
+
+module StrSet = Set.Make(String);;
+(* input_list is a list of [string; string] elements *)
+let topoSort input_list = 
+    let initial_graph = input_list in
+    let flat = List.flatten initial_graph in
+    (*  use a set for counting uniques *)
+    let num_unique = StrSet.cardinal (List.fold_left (fun acc elt -> StrSet.add elt acc) 
+                                                     StrSet.empty
+                                                     flat) in
+
+    let cmp a b = compare a b in
+    let find_start graph = List.sort (fun a b -> compare a b) 
+        (let remove_dups lst = List.fold_left  (* here we sort the list then remove
+            duplicate elements using fold *)
+                        (fun acc elem -> 
+                            let not_eqs h e a = if h = e then a else e :: a in
+                            match acc with
+                            | []     -> [elem]
+                            | [hd]   -> not_eqs hd elem acc
+                            | hd::tl -> not_eqs hd elem acc) 
+                        [] 
+                        (List.sort cmp lst) in
+        let has_incoming = remove_dups (List.map (fun elem -> List.hd elem) graph) in
+        let has_outgoing = remove_dups (List.map (fun elem -> List.nth elem 1) graph) in
+        let within k l = List.fold_left (fun acc elem -> acc || elem = k) false l in
+        (List.filter 
+                (fun elem -> not (within elem has_incoming))
+                has_outgoing)
+    ) in
+
+    let g_orphans = ref [] in
+
+    let remove_elem target graph =
+        let new_g = List.filter (fun edge -> not ((List.nth edge 1) = target)) graph in
+        g_orphans := List.filter (fun elem -> not (target = elem)) !g_orphans;
+        let orphans =
+           let removed = List.map 
+                (fun edge -> List.hd edge) 
+                (List.filter (fun edge -> (List.nth edge 1) = target) graph) 
+           in
+           List.filter
+                (fun possible -> 
+                    List.fold_left 
+                        (fun acc edge -> acc && not ((List.nth edge 1) =
+                            possible) && not ((List.hd edge) = possible))
+                        true 
+                        new_g) 
+                removed 
+        in
+        g_orphans := !g_orphans @ orphans; (* g_orphans is a reference so we
+        must dereference the pointer *)
+        let s = List.sort cmp (!g_orphans @ (find_start new_g)) in
+        (s, new_g) 
+    in
+
+    let rec topo_sort (s, graph) = match s with (* note recursions + appending e
+    and hd *)
+        | []     -> []
+        | [e]    -> e :: (topo_sort (remove_elem e graph))
+        | hd::tl -> hd :: (topo_sort (remove_elem hd graph)) 
+    in
+    let out = topo_sort ((find_start initial_graph), initial_graph) in
+    if (List.length out) == num_unique then 
+        out 
+    else 
+        []
+;;
+
+
+
+
+
+
+(***********************  PA 4 ********************************)
+
+
 (* type 'a mult_node = T of 'a * 'a mult_node;; *)
+module ClassMap = Map.Make(String);;
 
 (* ANI: identifier = identifier, typ = type *)
 type identifier = IDENT of int * string
-
 
 and cm = CM of clas list
 
@@ -27,8 +105,7 @@ and expr = INT of int * int
 	| BLOCK of int * expr list
 	| NEW of int * identifier
 	| ISVOID of int * expr
-	| PLUS of int * expr * expr
-	| MINUS of int * expr * expr
+	| PLUS of int * expr * expr | MINUS of int * expr * expr
 	| TIMES of int * expr * expr
 	| DIVIDE of int * expr * expr
 	| LT of int * expr * expr
@@ -53,7 +130,10 @@ and clas = CLASS of identifier * identifier option * int * feature list
 (* number of classes, class list *)
 and program = PROGRAM of int * clas list;;
 
-let failure line_no message = print_endline (Printf.sprintf ("ERROR: %d: Type-Check: %s") line_no message)
+let failure line_no message = 
+            print_endline (Printf.sprintf ("ERROR: %d: Type-Check: %s") line_no message);
+            (* To fool our compilier! *)
+            ignore(exit 0)
 
 (****************************  BUILD THE AST FROM FILE  ************************************)
 let rec binding_list lines num_bindings = match num_bindings with
@@ -318,21 +398,55 @@ and cm_class_list ast = match ast with
 and add_check_names class_list = 
                 let class_names = List.map (fun c -> 
                                                 let CLASS(ident, _, _, _) = c in
-                                                let IDENT(ln, name) = ident in name
-                                           )
+                                                let IDENT(ln, name) = ident in name)
                                            class_list in
+                (* check for main definition *)
                 if not (List.mem "Main" class_names) then failure 0 "class Main not found";
+                (* check for duplicate classes *)
+                let uniques = [] in
+                ignore(List.fold_left (fun uniques cls ->
+                                let CLASS(IDENT(ln, name), _, _, _) = cls in
+                                if List.mem name uniques then failure ln "Class name is duplicated";
+                                name::uniques
+                ) uniques class_list);
+                (* check for non-existent classes that are inherited *) 
+                (* check for classes that inherit from reserved *)
                 class_list @ predefd
 
 and class_map ast = 
     let PROGRAM(num_classes, class_list) = ast in
     (* Add this class node to the class map *)
     let class_list = add_check_names (List.map cm_class_list class_list) in
+    (* at this point all classnames should be unique *)
     let sorted_list = List.sort (fun a b -> match (a, b) with 
-                                                (CLASS(name, _, _, _), CLASS(name2, _, _, _)) ->  compare name name2
+                                                (CLASS(name, _, _, _), CLASS(name2, _, _, _)) -> match (name, name2) with
+                                                	(IDENT(c,d), IDENT(x,y)) -> compare d y
                                             ) class_list in
-     (* add inherited attrs *)
-     CM(sorted_list)  ;;
+    (* still need to add inherited attrs, but first! topo-sorting *)
+    (* the list of edges to pass into topo *)
+    let edges_to_sort = List.map (fun cls -> let CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, _) = cls in
+                                             [name; inherits]) 
+                                   (* filtering out Object before we sort *)
+                                 (List.filter (fun cls -> let CLASS(IDENT(_, name), _, _, _) = cls in
+                                                          not (name = "Object")) class_list)
+    in
+    let order = topoSort edges_to_sort in
+    if (List.length order) < 1 then failure 0 "Class hierarchy contains an inheritance cycle";
+    (* here we can add attributes to class node *)
+    let order = List.map (fun str -> List.find (fun c_node -> let CLASS(IDENT(_, name), _, _, _) = c_node in
+                                                              str = name) 
+                                     sorted_list) order in
+    let cmap = List.fold_left (fun cm cls -> match cls with
+                                   CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, attr_list) -> 
+                                        let ih_attr_list = ClassMap.find inherits cm in
+                                        ClassMap.add name (ih_attr_list @ attr_list) cm
+                                 | CLASS(IDENT(_, name), None, _, attr_list) ->
+                                        ClassMap.add name attr_list cm
+                        )
+                        ClassMap.empty
+                        order in
+    (* ClassMap.iter (fun k b -> print_endline k) cmap; *)
+    cmap;;
 
 (******************************* TYPE CHECKING METHODS *****************************)
 (* let check_if_inherits_int ast  *)
@@ -346,8 +460,6 @@ let print_list lst = List.iter (fun a -> print_string (a ^ "\n")) lst;;
 let print_identifier ident oc = match ident with
 	IDENT(line_no, str) -> 
 			Printf.fprintf oc "%d\n%s\n" line_no str;
-			(* Printf.printf "%d\n%s\n" line_no str *)
-
 ;;
 
 let rec print_bindings bindings oc = match bindings with
@@ -537,16 +649,14 @@ let print_cm_attr oc feat = match feat with
     |   _ -> ()
     ;;
 
-let print_class_map class_map oc = match class_map with 
-    CM(class_list) ->
-        Printf.fprintf oc "class_map\n";
-        Printf.fprintf oc "%d\n" (List.length class_list);
-        List.map (fun cm_class -> match cm_class with 
-                                              CLASS(name_i, _, _, feats) ->
-                                                  let IDENT(_, name) = name_i in
-                                                  Printf.fprintf oc "%s\n%d\n" name (List.length feats);
-                                                  List.map (print_cm_attr oc) feats;
-                 ) class_list;
+let print_class_map class_map oc = 
+    Printf.fprintf oc "class_map\n";
+    Printf.fprintf oc "%d\n" (ClassMap.cardinal class_map);
+    ClassMap.iter (fun cname feat_list ->
+                        Printf.fprintf oc "%s\n"cname ;
+                        Printf.fprintf oc "%d\n" (List.length feat_list);
+                        ignore(List.iter (fun feat -> print_cm_attr oc feat) feat_list); 
+                  ) class_map;
 ;;
 
 let rec print_ast ast oc = match ast with
@@ -561,7 +671,6 @@ let filename = match Array.length (Sys.argv) with
 ;;
 
          
-
 let lines = ref [] in
 let in_file = open_in filename in
 try
