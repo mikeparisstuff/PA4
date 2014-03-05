@@ -450,6 +450,7 @@ and add_check_names class_list =
                 List.iter (fun cls ->
                 			let CLASS(IDENT(ln, name), Some(IDENT(tln, typ)), _, _) = cls in
                 			(* CHECK IF THIS SHOULD FAIL ON LINE OF NAME OR TYP *)
+                                        if name = "self" then failure ln "Cannot use self in attribute name";
                 			if not (List.mem typ known_classes) then failure ln "Inheriting from unbound class";
                 ) class_list;
 
@@ -531,32 +532,52 @@ and impl_class_list ast = match ast with
 and add_impl_bases_and_check class_list = 
 	class_list @ base_impl_classes 
 
-(* checks if two formals lists are the same identifer + type *)
+(* checks if two formals lists have all the same signatures *)
+(* if not return false *)
 and formals_equal fml1 fml2 = 
                   (* FML *)
-    let both = List.combine fml1 fml2 in
-    let bad_matches = List.filter (fun (x, y) ->
+    try
+        let both = List.combine fml1 fml2 in
+        let bad_matches = List.filter (fun (x, y) ->
                                     let FORMAL(IDENT(_, a), IDENT(_, b)) = x in
                                     let FORMAL(IDENT(_, c), IDENT(_, d)) = y in
+                                    print_endline a;
+                                    print_endline c;
                                     not(a = c && b = d)
                                   )
                                   both in
-    1 > List.length bad_matches
+        0 = List.length bad_matches
+    with Invalid_argument reason -> false
+
+(* checks to see if SELF_TYPE is used and throws if it is *)
+(* should also check to see if types exist *)
+and check_formals formals = 
+    List.iter (fun formal -> 
+                    let FORMAL(IDENT(_, name), IDENT(ln, typ)) = formal in
+                    if typ = "SELF_TYPE" then
+                        failure ln "Cannot use SELF_TYPE as a formal";
+                    if name = "self" then
+                        failure ln "Cannot use self as an identifer in a formal";
+              )
+              formals
 
 (* builds a FeatMap which is a map of method name METHOD pairs *)
-and make_method_map ih_attr_map meth_list = 
+and make_method_map ih_attr_map meth_list cls = 
             List.fold_left (fun fm feat -> 
                                 let METHOD(IDENT(ln, fname), IDENT(_, typ), formals, _) = feat in
+                                check_formals formals;
                                 if FeatMap.mem fname fm then begin
-                                    let METHOD(_, IDENT(_, ih_typ), inherited_formals, _) = FeatMap.find fname fm in
+                                    let (METHOD(_, IDENT(_, ih_typ), inherited_formals, _), pcls) = FeatMap.find fname fm in
+                                    if cls = pcls then
+                                        failure ln "Redefining method in same class";
                                     if not(formals_equal formals inherited_formals) then 
-                                        failure ln "Redefinition of formals breaks class";
+                                        failure ln "Redefinition of formals breaks method";
                                     if not(typ = ih_typ) then
-                                        failure ln "You cannot change the type of the expression";
+                                        failure ln "Return type of method redefined";
                                 end;
-                                FeatMap.add fname feat fm
-                            )
-                            FeatMap.empty
+                                FeatMap.add fname (feat, cls) fm
+                           )
+                            ih_attr_map
                             meth_list
 
 and impl_map ast = 
@@ -593,13 +614,14 @@ and impl_map ast =
                                        CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, attr_list) -> 
                                             let ih_attr_map = ImplMap.find inherits cm in
                                             (* for each str in ih_attr_map do something *)
-                                            ImplMap.add name (make_method_map ih_attr_map attr_list) cm
+                                            ImplMap.add name ((make_method_map ih_attr_map attr_list name)) cm
                                      (* When class is object, first case *)
                                      | CLASS(IDENT(_, name), None, _, attr_list) ->
-                                            ImplMap.add name (make_method_map FeatMap.empty attr_list) cm
+                                            ImplMap.add name (make_method_map FeatMap.empty attr_list "Object") cm
                             )
                             ImplMap.empty
                             order in
+
 
         if not (FeatMap.mem "main" (ImplMap.find "Main" imap)) then 
             failure 0 "Must have a main method in yo Main class";
@@ -625,7 +647,6 @@ let print_identifier ident oc = match ident with
 let rec print_bindings bindings oc = match bindings with
 	[] -> ()
 |	LB_NO_INIT(ident, typ) :: tl  -> 
-				Printf.fprintf oc "let_binding_no_init\n";
 				print_identifier ident oc;
 				print_identifier typ oc;
 				print_bindings tl oc;
@@ -813,11 +834,30 @@ let print_class_map class_map oc =
     Printf.fprintf oc "class_map\n";
     Printf.fprintf oc "%d\n" (ClassMap.cardinal class_map);
     ClassMap.iter (fun cname feat_list ->
-                        Printf.fprintf oc "%s\n"cname ;
+                        Printf.fprintf oc "%s\n" cname ;
                         Printf.fprintf oc "%d\n" (List.length feat_list);
                         List.iter (fun feat -> print_cm_attr oc feat) feat_list; 
                   ) class_map;
 ;;
+
+(*********************** IMPLEMENTATION MAP PRINTING *******************)
+let print_impl_map impl_map oc =
+    Printf.fprintf oc "implementation_map\n";
+    Printf.fprintf oc "%d\n" (ImplMap.cardinal impl_map);
+    ImplMap.iter (fun cname method_map ->
+                      Printf.fprintf oc "%s\n" cname;
+                      print_endline cname;
+                      Printf.fprintf oc "%d\n" (FeatMap.cardinal method_map);
+                      FeatMap.iter (fun mname mtup -> 
+                                      let (meth, cls) = mtup in 
+                                      print_endline mname;
+                                      Printf.fprintf oc "%s\n" mname;
+                                    )
+                                    method_map;
+                 )
+                 impl_map
+;;
+    
 
 let rec print_ast ast oc = match ast with
 	PROGRAM(num_classes, class_list) -> 
@@ -852,6 +892,7 @@ with
         let implMap = impl_map p in
         (* since print_class_map has side-effects we must ignore it *)
         ignore(print_class_map classMap oc);
+        (* ignore(print_impl_map implMap oc); *)
 	(* print_ast p oc;  *)
 	close_out oc;
 end

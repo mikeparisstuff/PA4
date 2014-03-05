@@ -1,12 +1,10 @@
 class Main inherits IO {
-  method1(num : Int) : Int {  -- same
+  m(num : Int) : Int {  -- same
       6
    };
-  main() : Object { 
-	    5
-  } ;
+  d(num:  Int) : Int { 9 };
 } ; 
 
 class B inherits Main {
-    method1(bum: Chublee, num: ChumLee) :  Int { 5 };
+    g(s: Int) : Int {9};
 };
