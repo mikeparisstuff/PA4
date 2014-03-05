@@ -1,9 +1,12 @@
 class Main inherits IO {
-  my_attribute : Int <- 5 ;
-  method1(num : Int) : SELF_TYPE {  -- same
-      self
+  method1(num : Int) : Int {  -- same
+      6
    };
   main() : Object { 
 	    5
   } ;
 } ; 
+
+class B inherits Main {
+    method1(bum: Chublee, num: ChumLee) :  Int { 5 };
+};

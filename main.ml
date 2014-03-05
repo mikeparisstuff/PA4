@@ -531,30 +531,34 @@ and impl_class_list ast = match ast with
 and add_impl_bases_and_check class_list = 
 	class_list @ base_impl_classes 
 
-and equal_formals fml1 fml2 = 
+(* checks if two formals lists are the same identifer + type *)
+and formals_equal fml1 fml2 = 
                   (* FML *)
     let both = List.combine fml1 fml2 in
-    let bad_matches = List.filter (fun (a, b) ->
-                                    let FORMAL(x, y) = a in
-                                    let FORMAL(c, d) = b in
-                                    not(x = c && y = d)
+    let bad_matches = List.filter (fun (x, y) ->
+                                    let FORMAL(IDENT(_, a), IDENT(_, b)) = x in
+                                    let FORMAL(IDENT(_, c), IDENT(_, d)) = y in
+                                    not(a = c && b = d)
                                   )
                                   both in
     1 > List.length bad_matches
 
+(* builds a FeatMap which is a map of method name METHOD pairs *)
 and make_method_map ih_attr_map meth_list = 
             List.fold_left (fun fm feat -> 
                                 let METHOD(IDENT(ln, fname), IDENT(_, typ), formals, _) = feat in
-                                ignore(if FeatMap.mem fname fm then 
+                                if FeatMap.mem fname fm then begin
                                     let METHOD(_, IDENT(_, ih_typ), inherited_formals, _) = FeatMap.find fname fm in
-                                    if not(equal_formals formals inherited_formals) then 
+                                    if not(formals_equal formals inherited_formals) then 
                                         failure ln "Redefinition of formals breaks class";
                                     if not(typ = ih_typ) then
-                                        failure ln "You cannot change the type of the expression";);
+                                        failure ln "You cannot change the type of the expression";
+                                end;
                                 FeatMap.add fname feat fm
                             )
                             FeatMap.empty
                             meth_list
+
 and impl_map ast = 
 	let PROGRAM(num_classes, class_list) = ast in
 
@@ -584,7 +588,7 @@ and impl_map ast =
     
 
 
-        (* NEED TO CHANGE THIS SO THAT IT ONLY INCLUDES THE ULTIMATE PARENT DEFINITION *)
+        (* The imap is map of maps, IE class maps to method name which maps to METHOD struct *)
         let imap = List.fold_left (fun cm cls -> match cls with
                                        CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, attr_list) -> 
                                             let ih_attr_map = ImplMap.find inherits cm in
@@ -597,7 +601,7 @@ and impl_map ast =
                             ImplMap.empty
                             order in
 
-        if FeatMap.mem "main" (ImplMap.find "Main" imap) then 
+        if not (FeatMap.mem "main" (ImplMap.find "Main" imap)) then 
             failure 0 "Must have a main method in yo Main class";
  
     (* Create impl map *)
