@@ -450,7 +450,6 @@ and add_check_names class_list =
                 List.iter (fun cls ->
                 			let CLASS(IDENT(ln, name), Some(IDENT(tln, typ)), _, _) = cls in
                 			(* CHECK IF THIS SHOULD FAIL ON LINE OF NAME OR TYP *)
-                                        if name = "self" then failure ln "Cannot use self in attribute name";
                 			if not (List.mem typ known_classes) then failure ln "Inheriting from unbound class";
                 ) class_list;
 
@@ -474,17 +473,23 @@ and class_map ast =
                                  (List.filter (fun cls -> let CLASS(IDENT(_, name), _, _, _) = cls in
                                                           not (name = "Object")) class_list)
     in
-    let order = topoSort edges_to_sort in
-    if (List.length order) < 1 then failure 0 "Class hierarchy contains an inheritance cycle";
+    let str_order = topoSort edges_to_sort in
+    if (List.length str_order) < 1 then failure 0 "Class hierarchy contains an inheritance cycle";
+    let valid_types = str_order @ ["SELF_TYPE"] in
     (* here we can add attributes to class node *)
     let order = List.map (fun str -> List.find (fun c_node -> let CLASS(IDENT(_, name), _, _, _) = c_node in
                                                               str = name) 
-                                     sorted_list) order in
+                                     sorted_list) str_order in
 
     (* function to check if attributes that are inherited are redefined in subclass *)
+    (* also checks for self and if used types exist *)
     let attr_redef_check attr_list ih_attr_list = 
         List.iter (fun attr -> 
-                       let ATTRIBUTE(IDENT(ln, name), _, _) = attr in
+                       let ATTRIBUTE(IDENT(ln, name), IDENT(_,typ), _) = attr in
+                       if not (List.mem typ valid_types) then
+                           failure ln "Attribute uses non-existent type";
+                       if name = "self" then
+                           failure ln "Attribute cannot use self as an identifier";
                        List.iter (fun ih_attr -> 
                                       let ATTRIBUTE(IDENT(_, pname), _, _) = ih_attr in
                                       if pname = name then
@@ -549,37 +554,6 @@ and formals_equal fml1 fml2 =
         0 = List.length bad_matches
     with Invalid_argument reason -> false
 
-(* checks to see if SELF_TYPE is used and throws if it is *)
-(* should also check to see if types exist *)
-and check_formals formals = 
-    List.iter (fun formal -> 
-                    let FORMAL(IDENT(_, name), IDENT(ln, typ)) = formal in
-                    if typ = "SELF_TYPE" then
-                        failure ln "Cannot use SELF_TYPE as a formal";
-                    if name = "self" then
-                        failure ln "Cannot use self as an identifer in a formal";
-              )
-              formals
-
-(* builds a FeatMap which is a map of method name METHOD pairs *)
-and make_method_map ih_attr_map meth_list cls = 
-            List.fold_left (fun fm feat -> 
-                                let METHOD(IDENT(ln, fname), IDENT(_, typ), formals, _) = feat in
-                                check_formals formals;
-                                if FeatMap.mem fname fm then begin
-                                    let (METHOD(_, IDENT(_, ih_typ), inherited_formals, _), pcls) = FeatMap.find fname fm in
-                                    if cls = pcls then
-                                        failure ln "Redefining method in same class";
-                                    if not(formals_equal formals inherited_formals) then 
-                                        failure ln "Redefinition of formals breaks method";
-                                    if not(typ = ih_typ) then
-                                        failure ln "Return type of method redefined";
-                                end;
-                                FeatMap.add fname (feat, cls) fm
-                           )
-                            ih_attr_map
-                            meth_list
-
 and impl_map ast = 
 	let PROGRAM(num_classes, class_list) = ast in
 
@@ -598,16 +572,52 @@ and impl_map ast =
                                  (List.filter (fun cls -> let CLASS(IDENT(_, name), _, _, _) = cls in
                                                           not (name = "Object")) class_list)
 	in 
-	let order = topoSort edges_to_sort in
-	if (List.length order) < 1 then failure 0 "Class hierarchy contains an inheritance cycle";
+	let str_order = topoSort edges_to_sort in
+        let valid_types = str_order @ ["SELF_TYPE"] in
 
 	(* replace string of Classes with Class Nodes *)
         let order = List.map (fun str -> List.find (fun c_node -> let CLASS(IDENT(_, name), _, _, _) = c_node in
                                                               str = name) 
-                                     sorted_list) order in
+                                     sorted_list) str_order in
 
-    
+            
+        (* checks to see if SELF_TYPE is used and throws if it is *)
+        (* also checks to see if types exist *)
+        let check_formals valid_types formals = 
+            List.iter (fun formal -> 
+                            let FORMAL(IDENT(_, name), IDENT(ln, typ)) = formal in
+                            if not (List.mem typ valid_types) then
+                                failure ln "Formal uses a type that has not been defined";
+                            if typ = "SELF_TYPE" then
+                                failure ln "Cannot use SELF_TYPE as a formal";
+                            if name = "self" then
+                                failure ln "Cannot use self as an identifer in a formal";
+                      )
+                      formals 
+        in
 
+        (* builds a FeatMap which is a map of method name METHOD pairs *)
+        let make_method_map ih_attr_map meth_list cls = 
+                    List.fold_left (fun fm feat -> 
+                                        let METHOD(IDENT(ln, fname), IDENT(tln, typ), formals, _) = feat in
+                                        (* check if type returned is in our list of valid types *)
+                                        if not (List.mem typ valid_types) then 
+                                            failure ln "Method returns non-existent type";
+                                        check_formals valid_types formals;
+                                        if FeatMap.mem fname fm then begin
+                                            let (METHOD(_, IDENT(_, ih_typ), inherited_formals, _), pcls) = FeatMap.find fname fm in
+                                            if cls = pcls then
+                                                failure ln "Redefining method in same class";
+                                            if not(formals_equal formals inherited_formals) then 
+                                                failure ln "Redefinition of formals breaks method";
+                                            if not(typ = ih_typ) then
+                                                failure ln "Return type of method redefined";
+                                        end;
+                                        FeatMap.add fname (feat, cls) fm
+                                   )
+                                    ih_attr_map
+                                    meth_list
+         in
 
         (* The imap is map of maps, IE class maps to method name which maps to METHOD struct *)
         let imap = List.fold_left (fun cm cls -> match cls with
