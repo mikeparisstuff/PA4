@@ -597,25 +597,9 @@ and impl_map ast =
                             ImplMap.empty
                             order in
 
-        FeatMap.find "main" (ImplMap.find "Main" imap);
-        (*
-    ImplMap.iter (fun name bindings -> 
-    	if name = "Main" then
-    		let main_found = List.fold_left (fun found_main feat -> match feat with 
-					METHOD(IDENT(_, "main"), _, forms, _) ->
-						if (List.length forms) = 0 then begin
-							true
-						end
-						else begin
-							failure 0 "main method must be parameter less";
-							found_main
-						end
-				(* |   ATTRIBUTE(IDENT(_, name), _, _) -> begin print_string ("FOUND " ^ name); found_main end *)
-				|  _ -> found_main
-				) false bindings in
-			if not main_found then failure 0 "Could not find main method in class Main";
-		) imap;
-                *)
+        if FeatMap.mem "main" (ImplMap.find "Main" imap) then 
+            failure 0 "Must have a main method in yo Main class";
+ 
     (* Create impl map *)
     imap
 ;;
