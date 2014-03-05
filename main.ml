@@ -69,14 +69,12 @@ let topoSort input_list =
 ;;
 
 
-
-
-(***********************  PA 4 ********************************)
-
+(***********************  PA4 ******************************)
 
 (* type 'a mult_node = T of 'a * 'a mult_node;; *)
 module ClassMap = Map.Make(String);;
 module ImplMap = Map.Make(String);;
+module FeatMap = Map.Make(String);;
 
 (* ANI: identifier = identifier, typ = type *)
 type identifier = IDENT of int * string
@@ -118,7 +116,7 @@ and expr = INT of int * int
 	| CASE of int * expr * case_element list
 	| IDENTIFIER of int * identifier
 
-              (*           fname,        type,       no_init or init with expr *)
+                        (* fname,        type,       no_init or init with expr *)
 and feature = ATTRIBUTE of identifier * identifier * expr option
                     (* name,     return type,  () or list,   not-opt *)
 	| METHOD of identifier * identifier * formals list * expr
@@ -460,25 +458,6 @@ and add_check_names class_list =
 and class_map ast = 
     let PROGRAM(num_classes, class_list) = ast in
 
-    (* Check for parameterless main method in Main *)
-    (* List.iter (fun c -> match c with 
-    	CLASS(IDENT(_, "Main"), _, _, feats) ->
-				let main_found = List.fold_left (fun found_main feat -> match feat with 
-						METHOD(IDENT(_, "main"), _, forms, _) ->
-							if (List.length forms) = 0 then begin
-								true
-							end
-							else begin
-								failure 0 "main method must be parameterless";
-								found_main
-							end
-					(* |   ATTRIBUTE(IDENT(_, name), _, _) -> begin print_string ("FOUND " ^ name); found_main end *)
-					|  _ -> found_main
-					) false feats in
-				if not main_found then failure 0 "Could not find main method in class Main";
-    |   _ -> ()
-    ) class_list; *)
-
     (* Add this class node to the class map *)
     let class_list = add_check_names (List.map cm_class_list class_list) in
     (* at this point all classnames should be unique *)
@@ -500,9 +479,33 @@ and class_map ast =
     let order = List.map (fun str -> List.find (fun c_node -> let CLASS(IDENT(_, name), _, _, _) = c_node in
                                                               str = name) 
                                      sorted_list) order in
+
+    (* function to check if attributes that are inherited are redefined in subclass *)
+    let attr_redef_check attr_list ih_attr_list = 
+        List.iter (fun attr -> 
+                       let ATTRIBUTE(IDENT(ln, name), _, _) = attr in
+                       List.iter (fun ih_attr -> 
+                                      let ATTRIBUTE(IDENT(_, pname), _, _) = ih_attr in
+                                      if pname = name then
+                                         failure ln "Class redefines an inherited attribute";
+                                  )
+                                  ih_attr_list;
+                       (* effecient! and how! *)
+                       List.iter (fun attr -> 
+                                      let ATTRIBUTE(IDENT(oln, other_name), _, _) = attr in
+                                      if other_name = name && not(oln = ln) then 
+                                          failure oln "Class defines an attribute twice! yikes!";
+                                 ) 
+                                 attr_list;
+                  ) 
+                  attr_list in
+
+
+
     let cmap = List.fold_left (fun cm cls -> match cls with
                                    CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, attr_list) -> 
                                         let ih_attr_list = ClassMap.find inherits cm in
+                                        attr_redef_check attr_list ih_attr_list;
                                         ClassMap.add name (ih_attr_list @ attr_list) cm
                                  | CLASS(IDENT(_, name), None, _, attr_list) ->
                                         ClassMap.add name attr_list cm
@@ -528,6 +531,30 @@ and impl_class_list ast = match ast with
 and add_impl_bases_and_check class_list = 
 	class_list @ base_impl_classes 
 
+and equal_formals fml1 fml2 = 
+                  (* FML *)
+    let both = List.combine fml1 fml2 in
+    let bad_matches = List.filter (fun (a, b) ->
+                                    let FORMAL(x, y) = a in
+                                    let FORMAL(c, d) = b in
+                                    not(x = c && y = d)
+                                  )
+                                  both in
+    1 > List.length bad_matches
+
+and make_method_map ih_attr_map meth_list = 
+            List.fold_left (fun fm feat -> 
+                                let METHOD(IDENT(ln, fname), IDENT(_, typ), formals, _) = feat in
+                                ignore(if FeatMap.mem fname fm then 
+                                    let METHOD(_, IDENT(_, ih_typ), inherited_formals, _) = FeatMap.find fname fm in
+                                    if not(equal_formals formals inherited_formals) then 
+                                        failure ln "Redefinition of formals breaks class";
+                                    if not(typ = ih_typ) then
+                                        failure ln "You cannot change the type of the expression";);
+                                FeatMap.add fname feat fm
+                            )
+                            FeatMap.empty
+                            meth_list
 and impl_map ast = 
 	let PROGRAM(num_classes, class_list) = ast in
 
@@ -539,7 +566,7 @@ and impl_map ast =
                                             ) class_list in
 
 	(* still need to add inherited attrs, but first! topo-sorting *)
-    (* the list of edges to pass into topo *)
+        (* the list of edges to pass into topo *)
 	let edges_to_sort = List.map (fun cls -> let CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, _) = cls in
                                              [name; inherits]) 
                                    (* filtering out Object before we sort *)
@@ -550,21 +577,28 @@ and impl_map ast =
 	if (List.length order) < 1 then failure 0 "Class hierarchy contains an inheritance cycle";
 
 	(* replace string of Classes with Class Nodes *)
-    let order = List.map (fun str -> List.find (fun c_node -> let CLASS(IDENT(_, name), _, _, _) = c_node in
+        let order = List.map (fun str -> List.find (fun c_node -> let CLASS(IDENT(_, name), _, _, _) = c_node in
                                                               str = name) 
                                      sorted_list) order in
 
-    (* NEED TO CHANGE THIS SO THAT IT ONLY INCLUDES THE ULTIMATE PARENT DEFINITION *)
-    let imap = List.fold_left (fun cm cls -> match cls with
-                                   CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, attr_list) -> 
-                                        let ih_attr_list = ImplMap.find inherits cm in
-                                        ImplMap.add name (ih_attr_list @ attr_list) cm
-                                 | CLASS(IDENT(_, name), None, _, attr_list) ->
-                                        ImplMap.add name attr_list cm
-                        )
-                        ImplMap.empty
-                        order in
+    
 
+
+        (* NEED TO CHANGE THIS SO THAT IT ONLY INCLUDES THE ULTIMATE PARENT DEFINITION *)
+        let imap = List.fold_left (fun cm cls -> match cls with
+                                       CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, attr_list) -> 
+                                            let ih_attr_map = ImplMap.find inherits cm in
+                                            (* for each str in ih_attr_map do something *)
+                                            ImplMap.add name (make_method_map ih_attr_map attr_list) cm
+                                     (* When class is object, first case *)
+                                     | CLASS(IDENT(_, name), None, _, attr_list) ->
+                                            ImplMap.add name (make_method_map FeatMap.empty attr_list) cm
+                            )
+                            ImplMap.empty
+                            order in
+
+        FeatMap.find "main" (ImplMap.find "Main" imap);
+        (*
     ImplMap.iter (fun name bindings -> 
     	if name = "Main" then
     		let main_found = List.fold_left (fun found_main feat -> match feat with 
@@ -573,7 +607,7 @@ and impl_map ast =
 							true
 						end
 						else begin
-							failure 0 "main method must be parameterless";
+							failure 0 "main method must be parameter less";
 							found_main
 						end
 				(* |   ATTRIBUTE(IDENT(_, name), _, _) -> begin print_string ("FOUND " ^ name); found_main end *)
@@ -581,6 +615,7 @@ and impl_map ast =
 				) false bindings in
 			if not main_found then failure 0 "Could not find main method in class Main";
 		) imap;
+                *)
     (* Create impl map *)
     imap
 ;;
@@ -792,7 +827,7 @@ let print_class_map class_map oc =
     ClassMap.iter (fun cname feat_list ->
                         Printf.fprintf oc "%s\n"cname ;
                         Printf.fprintf oc "%d\n" (List.length feat_list);
-                        ignore(List.iter (fun feat -> print_cm_attr oc feat) feat_list); 
+                        List.iter (fun feat -> print_cm_attr oc feat) feat_list; 
                   ) class_map;
 ;;
 
