@@ -76,6 +76,7 @@ let topoSort input_list =
 
 (* type 'a mult_node = T of 'a * 'a mult_node;; *)
 module ClassMap = Map.Make(String);;
+module ImplMap = Map.Make(String);;
 
 (* ANI: identifier = identifier, typ = type *)
 type identifier = IDENT of int * string
@@ -371,6 +372,33 @@ let predefd = [CLASS(ai "Bool", obj, 0, []); CLASS(ai "Int", obj, 0, []);
               CLASS(ai "Object", None, 0, []); CLASS(ai "String", obj, 0, []);
               CLASS(ai "IO", obj, 0, [])] ;;
 
+let base_impl_classes = [
+	(* Bool *)
+	CLASS(ai "Bool", obj, 0, []);
+	(* Int *)
+	CLASS(ai "Int", obj, 0, []);
+	(* IO *)
+	CLASS(ai "IO", obj, 4, [
+		METHOD(IDENT(0, "out_string"), IDENT(0, "SELF_TYPE"), [FORMAL(IDENT(0, "x"), IDENT(0, "String"))], STRING(0, "internal"));
+		METHOD(IDENT(0, "out_int"), IDENT(0, "SELF_TYPE"), [FORMAL(IDENT(0, "x"), IDENT(0, "Int"))], STRING(0, "internal"));
+		METHOD(IDENT(0, "in_string"), IDENT(0, "String"), [], STRING(0, "internal"));
+		METHOD(IDENT(0, "in_int"), IDENT(0, "Int"), [], STRING(0, "internal"))
+	]);
+	(* Object *)
+	CLASS(ai "Object", None, 3, [
+		METHOD(IDENT(0, "abort"), IDENT(0, "Object"), [], STRING(0, "internal"));
+		METHOD(IDENT(0, "type_name"), IDENT(0, "String"), [], STRING(0, "internal"));
+		METHOD(IDENT(0, "copy"), IDENT(0, "SELF_TYPE"), [], STRING(0, "internal"))
+	]);
+	(* IO *)
+	CLASS(ai "String", obj, 3, [
+		METHOD(IDENT(0, "length"), IDENT(0, "Int"), [], STRING(0, "internal"));
+		METHOD(IDENT(0, "concat"), IDENT(0, "String"), [FORMAL(IDENT(0, "s"), IDENT(0, "String"))], STRING(0, "internal"));
+		METHOD(IDENT(0, "substr"), IDENT(0, "String"), [FORMAL(IDENT(0, "i"), IDENT(0, "Int")); FORMAL(IDENT(0, "l"), IDENT(0, "Int"))], STRING(0, "internal"))
+	])
+
+];;
+
 let rec cm_attribute feat_list = match feat_list with
     [] -> []
 
@@ -400,6 +428,7 @@ and add_check_names class_list =
                                            class_list in
                 (* check for main definition *)
                 if not (List.mem "Main" class_names) then failure 0 "class Main not found";
+
                 (* check for duplicate classes *)
                 let uniques = [] in
                 ignore(List.fold_left (fun uniques cls ->
@@ -430,6 +459,26 @@ and add_check_names class_list =
 
 and class_map ast = 
     let PROGRAM(num_classes, class_list) = ast in
+
+    (* Check for parameterless main method in Main *)
+    (* List.iter (fun c -> match c with 
+    	CLASS(IDENT(_, "Main"), _, _, feats) ->
+				let main_found = List.fold_left (fun found_main feat -> match feat with 
+						METHOD(IDENT(_, "main"), _, forms, _) ->
+							if (List.length forms) = 0 then begin
+								true
+							end
+							else begin
+								failure 0 "main method must be parameterless";
+								found_main
+							end
+					(* |   ATTRIBUTE(IDENT(_, name), _, _) -> begin print_string ("FOUND " ^ name); found_main end *)
+					|  _ -> found_main
+					) false feats in
+				if not main_found then failure 0 "Could not find main method in class Main";
+    |   _ -> ()
+    ) class_list; *)
+
     (* Add this class node to the class map *)
     let class_list = add_check_names (List.map cm_class_list class_list) in
     (* at this point all classnames should be unique *)
@@ -461,7 +510,80 @@ and class_map ast =
                         ClassMap.empty
                         order in
     (* ClassMap.iter (fun k b -> print_endline k) cmap; *)
-    cmap;;
+    cmap
+
+and impl_attribute feat_list = match feat_list with
+	[] -> []
+|   METHOD(name, typ, forms, expr) :: tl -> 
+			METHOD(name, typ, forms, expr) :: (impl_attribute tl)
+|   _ :: tl -> impl_attribute tl
+
+and impl_class_list ast = match ast with
+	CLASS( name, Some(typ), num_feats, feats) ->
+	       CLASS(name, Some(typ), num_feats, (impl_attribute feats))
+
+    |   CLASS( name, None, num_feats, feats) -> 
+               CLASS(name, obj, num_feats, (impl_attribute feats))	
+
+and add_impl_bases_and_check class_list = 
+	class_list @ base_impl_classes 
+
+and impl_map ast = 
+	let PROGRAM(num_classes, class_list) = ast in
+
+	(* Class List is now a list of class nodes with all their method nodes *)
+	let class_list = add_impl_bases_and_check (List.map impl_class_list class_list) in
+	let sorted_list = List.sort (fun a b -> match (a, b) with 
+                                                (CLASS(name, _, _, _), CLASS(name2, _, _, _)) -> match (name, name2) with
+                                                	(IDENT(c,d), IDENT(x,y)) -> compare d y
+                                            ) class_list in
+
+	(* still need to add inherited attrs, but first! topo-sorting *)
+    (* the list of edges to pass into topo *)
+	let edges_to_sort = List.map (fun cls -> let CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, _) = cls in
+                                             [name; inherits]) 
+                                   (* filtering out Object before we sort *)
+                                 (List.filter (fun cls -> let CLASS(IDENT(_, name), _, _, _) = cls in
+                                                          not (name = "Object")) class_list)
+	in 
+	let order = topoSort edges_to_sort in
+	if (List.length order) < 1 then failure 0 "Class hierarchy contains an inheritance cycle";
+
+	(* replace string of Classes with Class Nodes *)
+    let order = List.map (fun str -> List.find (fun c_node -> let CLASS(IDENT(_, name), _, _, _) = c_node in
+                                                              str = name) 
+                                     sorted_list) order in
+
+    (* NEED TO CHANGE THIS SO THAT IT ONLY INCLUDES THE ULTIMATE PARENT DEFINITION *)
+    let imap = List.fold_left (fun cm cls -> match cls with
+                                   CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, attr_list) -> 
+                                        let ih_attr_list = ImplMap.find inherits cm in
+                                        ImplMap.add name (ih_attr_list @ attr_list) cm
+                                 | CLASS(IDENT(_, name), None, _, attr_list) ->
+                                        ImplMap.add name attr_list cm
+                        )
+                        ImplMap.empty
+                        order in
+
+    ImplMap.iter (fun name bindings -> 
+    	if name = "Main" then
+    		let main_found = List.fold_left (fun found_main feat -> match feat with 
+					METHOD(IDENT(_, "main"), _, forms, _) ->
+						if (List.length forms) = 0 then begin
+							true
+						end
+						else begin
+							failure 0 "main method must be parameterless";
+							found_main
+						end
+				(* |   ATTRIBUTE(IDENT(_, name), _, _) -> begin print_string ("FOUND " ^ name); found_main end *)
+				|  _ -> found_main
+				) false bindings in
+			if not main_found then failure 0 "Could not find main method in class Main";
+		) imap;
+    (* Create impl map *)
+    imap
+;;
 
 (******************************* TYPE CHECKING METHODS *****************************)
 (* let check_if_inherits_int ast  *)
@@ -704,6 +826,7 @@ with
 	let file = (List.hd f_l) ^ ".cl-type" in
 	let oc = open_out file in
         let classMap = class_map p in 
+        let implMap = impl_map p in
         (* since print_class_map has side-effects we must ignore it *)
         ignore(print_class_map classMap oc);
 	(* print_ast p oc;  *)
