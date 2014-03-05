@@ -635,6 +635,9 @@ and impl_map ast =
 
         if not (FeatMap.mem "main" (ImplMap.find "Main" imap)) then 
             failure 0 "Must have a main method in yo Main class";
+    	let (main_method, cls) = (FeatMap.find "main" (ImplMap.find "Main" imap)) in
+    	let METHOD(_,_, forms, _) = main_method in
+    	if List.length forms != 0 then failure 0 "Parameterless main method not found";
  
     (* Create impl map *)
     imap
