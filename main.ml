@@ -115,6 +115,7 @@ and expr = INT of int * int
 	| LET of int * let_binding list * expr
 	| CASE of int * expr * case_element list
 	| IDENTIFIER of int * identifier
+        | INTERNAL
 
                         (* fname,        type,       no_init or init with expr *)
 and feature = ATTRIBUTE of identifier * identifier * expr option
@@ -378,21 +379,22 @@ let base_impl_classes = [
 	(* IO *)
 	CLASS(ai "IO", obj, 4, [
 		METHOD(IDENT(0, "out_string"), IDENT(0, "SELF_TYPE"), [FORMAL(IDENT(0, "x"), IDENT(0, "String"))], STRING(0, "internal"));
-		METHOD(IDENT(0, "out_int"), IDENT(0, "SELF_TYPE"), [FORMAL(IDENT(0, "x"), IDENT(0, "Int"))], STRING(0, "internal"));
-		METHOD(IDENT(0, "in_string"), IDENT(0, "String"), [], STRING(0, "internal"));
-		METHOD(IDENT(0, "in_int"), IDENT(0, "Int"), [], STRING(0, "internal"))
+		METHOD(IDENT(0, "out_int"), IDENT(0, "SELF_TYPE"), [FORMAL(IDENT(0, "x"), IDENT(0, "Int"))], INTERNAL);
+		METHOD(IDENT(0, "in_string"), IDENT(0, "String"), [], INTERNAL);
+		METHOD(IDENT(0, "in_int"), IDENT(0, "Int"), [], INTERNAL)
 	]);
 	(* Object *)
 	CLASS(ai "Object", None, 3, [
-		METHOD(IDENT(0, "abort"), IDENT(0, "Object"), [], STRING(0, "internal"));
-		METHOD(IDENT(0, "type_name"), IDENT(0, "String"), [], STRING(0, "internal"));
-		METHOD(IDENT(0, "copy"), IDENT(0, "SELF_TYPE"), [], STRING(0, "internal"))
+		METHOD(IDENT(0, "abort"), IDENT(0, "Object"), [], INTERNAL);
+		METHOD(IDENT(0, "type_name"), IDENT(0, "String"), [], INTERNAL);
+		METHOD(IDENT(0, "copy"), IDENT(0, "SELF_TYPE"), [], INTERNAL)
 	]);
 	(* IO *)
 	CLASS(ai "String", obj, 3, [
-		METHOD(IDENT(0, "length"), IDENT(0, "Int"), [], STRING(0, "internal"));
-		METHOD(IDENT(0, "concat"), IDENT(0, "String"), [FORMAL(IDENT(0, "s"), IDENT(0, "String"))], STRING(0, "internal"));
-		METHOD(IDENT(0, "substr"), IDENT(0, "String"), [FORMAL(IDENT(0, "i"), IDENT(0, "Int")); FORMAL(IDENT(0, "l"), IDENT(0, "Int"))], STRING(0, "internal"))
+		METHOD(IDENT(0, "length"), IDENT(0, "Int"), [], INTERNAL);
+		METHOD(IDENT(0, "concat"), IDENT(0, "String"), [FORMAL(IDENT(0, "s"), IDENT(0, "String"))], INTERNAL);
+		METHOD(IDENT(0, "substr"), IDENT(0, "String"), [FORMAL(IDENT(0, "i"), IDENT(0, "Int")); FORMAL(IDENT(0, "l"), IDENT(0, "Int"))],
+                INTERNAL)
 	])
 
 ];;
@@ -596,16 +598,18 @@ and impl_map ast =
                       formals 
         in
 
+
         (* builds a FeatMap which is a map of method name METHOD pairs *)
-        let make_method_map ih_attr_map meth_list cls = 
-                    List.fold_left (fun fm feat -> 
+        let make_method_map ih_attr_list meth_list cls = 
+                    List.fold_left (fun fl feat -> 
                                         let METHOD(IDENT(ln, fname), IDENT(tln, typ), formals, _) = feat in
                                         (* check if type returned is in our list of valid types *)
                                         if not (List.mem typ valid_types) then 
                                             failure ln "Method returns non-existent type";
                                         check_formals valid_types formals;
-                                        if FeatMap.mem fname fm then begin
-                                            let (METHOD(_, IDENT(_, ih_typ), inherited_formals, _), pcls) = FeatMap.find fname fm in
+                                        if List.mem_assoc fname fl then begin
+                                            let (_, pfeat, pcls)  = List.assoc fname fl in
+                                            let METHOD(_, IDENT(_, ih_typ), inherited_formals, _) = pfeat in
                                             if cls = pcls then
                                                 failure ln "Redefining method in same class";
                                             if not(formals_equal formals inherited_formals) then 
@@ -613,29 +617,31 @@ and impl_map ast =
                                             if not(typ = ih_typ) then
                                                 failure ln "Return type of method redefined";
                                         end;
-                                        FeatMap.add fname (feat, cls) fm
+                                        (* (method name, feat, cls) tells us that this feature was defined in this class *)
+                                        (fname, feat, cls) :: fl
                                    )
-                                    ih_attr_map
+                                    ih_attr_list
                                     meth_list
          in
 
         (* The imap is map of maps, IE class maps to method name which maps to METHOD struct *)
         let imap = List.fold_left (fun cm cls -> match cls with
                                        CLASS(IDENT(_, name), Some(IDENT(_, inherits)), _, attr_list) -> 
-                                            let ih_attr_map = ImplMap.find inherits cm in
+                                            let ih_attr_list = ImplMap.find inherits cm in
                                             (* for each str in ih_attr_map do something *)
-                                            ImplMap.add name ((make_method_map ih_attr_map attr_list name)) cm
+                                            ImplMap.add name (make_method_map ih_attr_list attr_list name) cm
                                      (* When class is object, first case *)
-                                     | CLASS(IDENT(_, name), None, _, attr_list) ->
-                                            ImplMap.add name (make_method_map FeatMap.empty attr_list "Object") cm
+                                     | CLASS(IDENT(_, name), None, _, obj_list) ->
+                                            (*  only add object methods on object *)
+                                             ImplMap.add name (make_method_map [] obj_list "Object") cm
                             )
                             ImplMap.empty
                             order in
 
 
-        if not (FeatMap.mem "main" (ImplMap.find "Main" imap)) then 
+        if not (List.assoc_mem "main" (ImplMap.find "Main" imap)) then 
             failure 0 "Must have a main method in yo Main class";
-    	let (main_method, cls) = (FeatMap.find "main" (ImplMap.find "Main" imap)) in
+    	let (_, main_method, _) = (List.assoc "main" (ImplMap.find "Main" imap)) in
     	let METHOD(_,_, forms, _) = main_method in
     	if List.length forms != 0 then failure 0 "Parameterless main method not found";
  
@@ -857,16 +863,29 @@ let print_class_map class_map oc =
 let print_impl_map impl_map oc =
     Printf.fprintf oc "implementation_map\n";
     Printf.fprintf oc "%d\n" (ImplMap.cardinal impl_map);
-    ImplMap.iter (fun cname method_map ->
+    ImplMap.iter (fun cname method_list ->
                       Printf.fprintf oc "%s\n" cname;
-                      print_endline cname;
-                      Printf.fprintf oc "%d\n" (FeatMap.cardinal method_map);
-                      FeatMap.iter (fun mname mtup -> 
-                                      let (meth, cls) = mtup in 
-                                      print_endline mname;
+                      Printf.fprintf oc "%d\n" (List.length method_list);
+                      List.iter (fun mtup -> 
+                                      let (mname, meth, cls) = mtup in 
                                       Printf.fprintf oc "%s\n" mname;
+                                      let METHOD(_, _, formals, _) = meth in
+                                      Printf.fprintf oc "%d\n" (List.length formals);
+                                      List.iter (fun formal -> 
+                                                    let FORMAL(IDENT(_, name), _) = formal in
+                                                    Printf.fprintf oc "%s\n" name;)
+                                                formals;
+                                      Printf.fprintf oc "%s\n" cls;
+                                      match meth with 
+                                        (* INTERNAL HANDLINING *)
+                                         METHOD(_, IDENT(_, ret_t), formals, INTERNAL) -> 
+                                             Printf.fprintf oc "0\n%s\ninternal\n%s.%s\n" ret_t cls mname;
+                                       | METHOD(_, _, formals, expr) -> begin
+                                              print_expr oc expr;                              
+                                           end
+                                         
                                     )
-                                    method_map;
+                                    method_list;
                  )
                  impl_map
 ;;
@@ -904,8 +923,8 @@ with
         let classMap = class_map p in 
         let implMap = impl_map p in
         (* since print_class_map has side-effects we must ignore it *)
-        ignore(print_class_map classMap oc);
-        (* ignore(print_impl_map implMap oc); *)
+        (* ignore(print_class_map classMap oc); *)
+        ignore(print_impl_map implMap oc);
 	(* print_ast p oc;  *)
 	close_out oc;
 end
