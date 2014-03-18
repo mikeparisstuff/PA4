@@ -664,16 +664,16 @@ let rec type_check ast environ =
         (*objEnv, classMap, implMap, parentMap*)
     let (oE, cM, iM, pM) = environ in
     (* if params we use backwards alphabet to pass into ret tree *)
-    match ast with 
-        PROGRAM(z, c_l) -> 
-             PROGRAM(z, List.map (fun clas -> 
-                                    let CLASS(IDENT(_, cname), _, _, _) = clas in
-                                    let environ = (ObjMap.add "SELF_TYPE" cname oE, cM, iM, pM) in
-                                    class_type_check clas environ) 
-                                 c_l) 
+    
+    let PROGRAM(z, c_l) = ast in 
+    PROGRAM(z, List.map (fun clas -> 
+                        let CLASS(IDENT(_, cname), _, _, _) = clas in
+                        let environ = (ObjMap.add "SELF_TYPE" cname oE, cM, iM, pM) in
+                        class_type_check clas environ) 
+                        c_l) 
 
 and class_type_check ast environ = 
-    let ast = CLASS(z, y, x, feat_list) in
+    let CLASS(z, y, x, feat_list) = ast in
     let a_feat_list = List.map (fun feat -> feat_type_check feat environ) feat_list in                                    
     CLASS(z, y, x, a_feat_list)
 
@@ -684,8 +684,7 @@ and feat_type_check ast environ =
              ATTRIBUTE(z, y, None) 
       | ATTRIBUTE(IDENT(z, name), y, Some(expr)) -> (* ATTR INIT *)
              let (ret_t, a_expr) = expr_type_check expr environ in 
-             let cur_cls = ObjMap.find "SELF_TYPE" in
-             let CLASS(IDENT(ln, cname), _, _, _) = ClassMap.find cur_clas in
+             let cur_cls = ObjMap.find "SELF_TYPE" oE in
              (* if not(lub pM cname ret_t) failure ln "LUB DIED"; *)
              
              (* TODO type check attr_no_init and attr_init *)
@@ -702,12 +701,12 @@ and expr_type_check ast environ =
     let (oE, cM, iM, pM) = environ in
     match ast with
             INT(z, y, None) -> 
-            ('Int', INT(z, y, 'Int')
+            ("Int", INT(z, y, Some("Int")))
         |   STRING(z, y, None) -> 
-            ('String', STRING(z, y, 'String')
+            ("String", STRING(z, y, Some("String")))
         (* and so on *)
 
-
+;;
 
 
 (*******************************  PRINTING HELPER METHODS *******************************)
@@ -979,11 +978,11 @@ with
 	let f_l = Str.split (Str.regexp "[.]") filename in
 	let file = (List.hd f_l) ^ ".cl-type" in
 	let oc = open_out file in
-        let classMap = class_map p in 
-        let implMap = impl_map p in
+    let classMap = class_map p in 
+    let implMap = impl_map p in
 
-        let environ = (ObjMap.empty, classMap, implMap, ()) in 
-        let annotated_st = type_check ast environ in
+    let environ = (ObjMap.empty, classMap, implMap, ()) in 
+    let annotated_st = type_check p environ in
 
         (* since print_class_map has side-effects we must ignore it *)
         (* ignore(print_class_map classMap oc); *)
