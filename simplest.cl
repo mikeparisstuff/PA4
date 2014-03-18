@@ -1,10 +1,6 @@
 class Main inherits IO {
   main() : Object {
-      let x <- 5;
-      "asd"
+       let x : Int <- 5555555 + 5323223 in
+        "la"
    };
 } ; 
-
-class B {
-    feature : Int <- 7;  
-};

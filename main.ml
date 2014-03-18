@@ -656,8 +656,8 @@ and impl_map ast =
 
 (******************************* TYPE CHECK **********************************)
 
-(* LUB! it *)
-let lub pM class1 class2 = true ;;
+(* LUB! it, either fails or returns the correct type *)
+let lub pM class1 class2 = class1 ;;
 
         (* does the right thing at every level *)
 let rec type_check ast environ = 
@@ -699,11 +699,65 @@ and feat_type_check ast environ =
 (* does glorious typechecking *)
 and expr_type_check ast environ = 
     let (oE, cM, iM, pM) = environ in
+    (* TODO: use parentmap to do logic *) 
+    let is_subclass pM t1 t2 = 
+        true in
+    (* currying *)
+    let is_subclass = is_subclass pM in
+
     match ast with
-            INT(z, y, None) -> 
+            ASSIGN(z, iden, expr, _) ->
+            let IDENT(_, t0) = iden in
+            let (t1, a_expr) = expr_type_check expr environ in
+            if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
+            (t1, ASSIGN(z, iden, a_expr, Some(t1)))
+        |   TRUE(z, _) ->
+            ("Bool", TRUE(z, Some("Bool")))
+        |   FALSE(z,  _) ->
+            ("Bool", TRUE(z, Some("Bool")))
+        |   INT(z, y, _) -> 
             ("Int", INT(z, y, Some("Int")))
-        |   STRING(z, y, None) -> 
+        |   STRING(z, y, _) -> 
             ("String", STRING(z, y, Some("String")))
+        |   NEW(z, y, _) ->
+            let IDENT(_, t) = y in
+            if (ObjMap.find "SELF_TYPE" oE) = t then 
+               ("SELF_TYPE", NEW(z, y, Some("SELF_TYPE")))  
+            else
+               (t, NEW(z, y, Some(t)))
+        |   IF_ELSE(z, cond, e_then, e_else, _) ->
+            let (cond_T, a_cond) = expr_type_check cond environ in
+            if not(cond_T = "Bool") then failure z "If clause must have expression of type Bool";
+            let (then_T, a_then) = expr_type_check e_then environ in
+            let (else_T, a_else) = expr_type_check e_else environ in
+            let ret_t = lub pM then_T else_T in
+            (ret_t, IF_ELSE(z, a_cond, a_then, a_else, Some(ret_t)))
+        |   BLOCK(z, e_list, _) ->
+            
+            let a_e_list = List.map (fun expr -> 
+                                        let (typ, a_expr) = expr_type_check expr environ in
+                                        a_expr
+                                    )
+                                    e_list in
+            let (f_typ, _) = expr_type_check (List.hd (List.rev a_e_list)) environ in
+            (f_typ, BLOCK(z, a_e_list, Some(f_typ)))
+
+        |   LET(z, lb_list, expr2, _) ->
+                (* TODO deal with multiple LBs in one *)
+                let lb = List.hd lb_list in
+                match lb with 
+                    (*
+                    LB_NO_INIT(_, typ) ->
+                     *)   
+                    LB_INIT(name_id, typ_id, l_expr) ->
+                        let IDENT(_, name) = name_id in
+                        let IDENT(_, typ) = typ_id in
+                        let (l_typ, al_expr) = expr_type_check l_expr environ in
+                        if not(is_subclass l_typ typ) then failure z "let expr must return sublcass";
+                        let environ = (ObjMap.add name typ oE, cM, iM, pM) in
+                        let (t1, a_expr2) = expr_type_check expr2 environ in
+                        (t1, LET(z, [LB_INIT(name_id, typ_id, al_expr)], a_expr2, Some(t1)))
+
         (* and so on *)
 
 ;;
