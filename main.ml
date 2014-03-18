@@ -378,23 +378,23 @@ let base_impl_classes = [
 	CLASS(ai "Int", obj, 0, []);
 	(* IO *)
 	CLASS(ai "IO", obj, 4, [
-		METHOD(IDENT(0, "out_string"), IDENT(0, "SELF_TYPE"), [FORMAL(IDENT(0, "x"), IDENT(0, "String"))], STRING(0, "internal"));
-		METHOD(IDENT(0, "out_int"), IDENT(0, "SELF_TYPE"), [FORMAL(IDENT(0, "x"), IDENT(0, "Int"))], INTERNAL);
+            METHOD(IDENT(0, "in_int"), IDENT(0, "Int"), [], INTERNAL);
 		METHOD(IDENT(0, "in_string"), IDENT(0, "String"), [], INTERNAL);
-		METHOD(IDENT(0, "in_int"), IDENT(0, "Int"), [], INTERNAL)
+		METHOD(IDENT(0, "out_int"), IDENT(0, "SELF_TYPE"), [FORMAL(IDENT(0, "x"), IDENT(0, "Int"))], INTERNAL);
+                METHOD(IDENT(0, "out_string"), IDENT(0, "SELF_TYPE"), [FORMAL(IDENT(0, "x"), IDENT(0, "String"))], INTERNAL);
 	]);
 	(* Object *)
 	CLASS(ai "Object", None, 3, [
 		METHOD(IDENT(0, "abort"), IDENT(0, "Object"), [], INTERNAL);
+                METHOD(IDENT(0, "copy"), IDENT(0, "SELF_TYPE"), [], INTERNAL);
 		METHOD(IDENT(0, "type_name"), IDENT(0, "String"), [], INTERNAL);
-		METHOD(IDENT(0, "copy"), IDENT(0, "SELF_TYPE"), [], INTERNAL)
 	]);
 	(* IO *)
 	CLASS(ai "String", obj, 3, [
-		METHOD(IDENT(0, "length"), IDENT(0, "Int"), [], INTERNAL);
 		METHOD(IDENT(0, "concat"), IDENT(0, "String"), [FORMAL(IDENT(0, "s"), IDENT(0, "String"))], INTERNAL);
+		METHOD(IDENT(0, "length"), IDENT(0, "Int"), [], INTERNAL);
 		METHOD(IDENT(0, "substr"), IDENT(0, "String"), [FORMAL(IDENT(0, "i"), IDENT(0, "Int")); FORMAL(IDENT(0, "l"), IDENT(0, "Int"))],
-                INTERNAL)
+                INTERNAL);
 	])
 
 ];;
@@ -608,7 +608,7 @@ and impl_map ast =
                                             failure ln "Method returns non-existent type";
                                         check_formals valid_types formals;
                                         if List.mem_assoc fname fl then begin
-                                            let (_, pfeat, pcls)  = List.assoc fname fl in
+                                            let (pfeat, pcls)  = List.assoc fname fl in
                                             let METHOD(_, IDENT(_, ih_typ), inherited_formals, _) = pfeat in
                                             if cls = pcls then
                                                 failure ln "Redefining method in same class";
@@ -618,7 +618,7 @@ and impl_map ast =
                                                 failure ln "Return type of method redefined";
                                         end;
                                         (* (method name, feat, cls) tells us that this feature was defined in this class *)
-                                        (fname, feat, cls) :: fl
+                                        fl @ [(fname, (feat, cls))] 
                                    )
                                     ih_attr_list
                                     meth_list
@@ -639,9 +639,9 @@ and impl_map ast =
                             order in
 
 
-        if not (List.assoc_mem "main" (ImplMap.find "Main" imap)) then 
+        if not (List.mem_assoc "main" (ImplMap.find "Main" imap)) then 
             failure 0 "Must have a main method in yo Main class";
-    	let (_, main_method, _) = (List.assoc "main" (ImplMap.find "Main" imap)) in
+    	let (main_method, _) = List.assoc "main" (ImplMap.find "Main" imap) in
     	let METHOD(_,_, forms, _) = main_method in
     	if List.length forms != 0 then failure 0 "Parameterless main method not found";
  
@@ -867,7 +867,7 @@ let print_impl_map impl_map oc =
                       Printf.fprintf oc "%s\n" cname;
                       Printf.fprintf oc "%d\n" (List.length method_list);
                       List.iter (fun mtup -> 
-                                      let (mname, meth, cls) = mtup in 
+                                      let (mname, (meth, cls)) = mtup in 
                                       Printf.fprintf oc "%s\n" mname;
                                       let METHOD(_, _, formals, _) = meth in
                                       Printf.fprintf oc "%d\n" (List.length formals);

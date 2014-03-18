@@ -1,6 +1,7 @@
 class Main inherits IO {
   main() : Object {
-      6
+      let x <- 5;
+      "asd"
    };
 } ; 
 
