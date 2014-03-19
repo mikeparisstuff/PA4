@@ -68,7 +68,7 @@ let topoSort input_list =
         []
 ;;
 
-
+let print_list lst = List.iter (fun a -> print_string (a ^ "\n")) lst;;
 (***********************  PA4 ******************************)
 
 (* type 'a mult_node = T of 'a * 'a mult_node;; *)
@@ -76,6 +76,7 @@ module ClassMap = Map.Make(String);;
 module ImplMap = Map.Make(String);;
 module FeatMap = Map.Make(String);;
 module ObjMap = Map.Make(String);;
+module ParentMap = Map.Make(String);;
 
 (* ANI: identifier = identifier, typ = type *)
 type identifier = IDENT of int * string
@@ -651,13 +652,40 @@ and impl_map ast =
  
     (* Create impl map *)
     imap
+
+and parent_map ast = 
+	let PROGRAM(num_classes, class_list) = ast in
+	(* At this point we have looked for inherting non existent classes so just run through class_list *)
+	let pmap = List.fold_left (fun acc elt -> match elt with
+		CLASS(IDENT(_, cls_name), Some(IDENT(_, inhers)), _, _) -> 
+			(* Printf.printf "Adding parent relation from %s to %s\n" cls_name inhers; *)
+			ParentMap.add cls_name inhers acc
+		|	_ -> acc (* Only class that does not inherit is Object so don't worry about it *)
+	) ParentMap.empty (add_check_names class_list) in
+	pmap
 ;;
 
 
 (******************************* TYPE CHECK **********************************)
+(* We are essentially tracing the path from each node to the root node Object
+	and then tracing back the two paths to see where they diverge. This point of
+	divergence is the least common anscestor in the inheritance heirarchy *)
+let rec trace_to_root pM cls= 
+	match cls with
+		"Object" -> 
+			(* We have finished tracing to the root *)
+			["Object"]
+	|	c ->
+			(* We want the result to have the root element first *)
+			c :: (trace_to_root pM (ParentMap.find c pM))
+;;
 
 (* LUB! it, either fails or returns the correct type *)
-let lub pM class1 class2 = class1 ;;
+let lub pM class1 class2 = 
+	let (trace1, trace2) = (trace_to_root pM class1, trace_to_root pM class2) in
+	let our_lub = List.fold_left (fun acc elt -> if (List.mem elt trace2 && acc = "") then elt else acc) "" trace1 in
+	our_lub;;
+
 
         (* does the right thing at every level *)
 let rec type_check ast environ = 
@@ -668,7 +696,15 @@ let rec type_check ast environ =
     let PROGRAM(z, c_l) = ast in 
     PROGRAM(z, List.map (fun clas -> 
                         let CLASS(IDENT(_, cname), _, _, _) = clas in
-                        let environ = (ObjMap.add "SELF_TYPE" cname oE, cM, iM, pM) in
+                        let oE = ObjMap.add "self" cname oE in
+
+                        let oE = List.fold_left (fun acc elt -> match elt with
+                        	ATTRIBUTE(IDENT(_, name), IDENT(_, typ), _) ->
+                        		(ObjMap.add name typ acc)
+                        |   _ -> acc
+                        ) oE (ClassMap.find cname cM) in
+
+                        let environ = (ObjMap.add "THIS_CLASS" cname oE, cM, iM, pM) in
                         class_type_check clas environ) 
                         c_l) 
 
@@ -680,28 +716,36 @@ and class_type_check ast environ =
 and feat_type_check ast environ = 
     let (oE, cM, iM, pM) = environ in
     match ast with
-        ATTRIBUTE(z, y, None) -> (* NO INIT *)
-             ATTRIBUTE(z, y, None) 
-      | ATTRIBUTE(IDENT(z, name), y, Some(expr)) -> (* ATTR INIT *)
+        ATTRIBUTE(name_ident, typ_ident, None) -> (* NO INIT *)
+            ATTRIBUTE(name_ident, typ_ident, None) 
+
+      | ATTRIBUTE(IDENT(z, name), IDENT(z2, typ), Some(expr)) -> (* ATTR INIT *)
+
              let (ret_t, a_expr) = expr_type_check expr environ in 
-             let cur_cls = ObjMap.find "SELF_TYPE" oE in
+
+             if not (is_subclass pM ret_t typ) then failure z "Attribute initiazed to expression of type that does not conform to static type";
+             let cur_cls = ObjMap.find "THIS_CLASS" oE in
              (* if not(lub pM cname ret_t) failure ln "LUB DIED"; *)
              
              (* TODO type check attr_no_init and attr_init *)
 
-             ATTRIBUTE(IDENT(z, name), y, Some(a_expr))
+             ATTRIBUTE(IDENT(z, name), IDENT(z2, typ), Some(a_expr))
       | METHOD(z, y, x, expr) ->
               let (ret_t, a_expr) = expr_type_check expr environ in
 
               METHOD(z, y, x, a_expr)
+
+and is_subclass pM t1 t2 = 
+	if t1 = t2 then true else
+	if t1 = "Object" then false else
+	is_subclass pM (ParentMap.find t1 pM) t2
 
 (* handle each case for an expression and return annotated ast + ret_tup type*)
 (* does glorious typechecking *)
 and expr_type_check ast environ = 
     let (oE, cM, iM, pM) = environ in
     (* TODO: use parentmap to do logic *) 
-    let is_subclass pM t1 t2 = 
-        true in
+    (* let is_subclass pM t1 t2 = true in *)
     (* currying *)
     let is_subclass = is_subclass pM in
 
@@ -714,14 +758,14 @@ and expr_type_check ast environ =
         |   TRUE(z, _) ->
             ("Bool", TRUE(z, Some("Bool")))
         |   FALSE(z,  _) ->
-            ("Bool", TRUE(z, Some("Bool")))
+            ("Bool", FALSE(z, Some("Bool")))
         |   INT(z, y, _) -> 
             ("Int", INT(z, y, Some("Int")))
         |   STRING(z, y, _) -> 
             ("String", STRING(z, y, Some("String")))
         |   NEW(z, y, _) ->
             let IDENT(_, t) = y in
-            if (ObjMap.find "SELF_TYPE" oE) = t then 
+            if (ObjMap.find "THIS_CLASS" oE) = t then 
                ("SELF_TYPE", NEW(z, y, Some("SELF_TYPE")))  
             else
                (t, NEW(z, y, Some(t)))
@@ -744,19 +788,58 @@ and expr_type_check ast environ =
 
         |   LET(z, lb_list, expr2, _) ->
                 (* TODO deal with multiple LBs in one *)
-                let lb = List.hd lb_list in
-                match lb with 
-                    (*
-                    LB_NO_INIT(_, typ) ->
-                     *)   
-                    LB_INIT(name_id, typ_id, l_expr) ->
-                        let IDENT(_, name) = name_id in
-                        let IDENT(_, typ) = typ_id in
-                        let (l_typ, al_expr) = expr_type_check l_expr environ in
-                        if not(is_subclass l_typ typ) then failure z "let expr must return sublcass";
-                        let environ = (ObjMap.add name typ oE, cM, iM, pM) in
-                        let (t1, a_expr2) = expr_type_check expr2 environ in
-                        (t1, LET(z, [LB_INIT(name_id, typ_id, al_expr)], a_expr2, Some(t1)))
+                let (binding_tuple_list, environ) = List.fold_left (fun (btl, environ) lb -> 
+                	let (oE, cM, iM, pM) = environ in
+	                match lb with 
+	                    LB_NO_INIT(IDENT(_, e0), IDENT(_, typ)) ->
+	                    let t0 = if typ = "SELF_TYPE" then ObjMap.find "THIS_CLASS" oE else typ in
+	                    let environ = (ObjMap.add e0 t0 oE, cM, iM, pM) in
+	                    (btl @ [lb], environ )
+	                    (* let (t1, a_expr2) = expr_type_check expr2 environ in
+	                    (t1, LET(z, )) *)
+	                |   LB_INIT(name_id, typ_id, l_expr) ->
+	                        let IDENT(_, name) = name_id in
+	                        let IDENT(_, typ) = typ_id in
+	                        let (l_typ, al_expr) = expr_type_check l_expr environ in
+	                        if not(is_subclass l_typ typ) then failure z "let expr must return sublcass";
+	                        let environ = (ObjMap.add name typ oE, cM, iM, pM) in
+	                        (btl @ [ LB_INIT(name_id, typ_id, al_expr)], environ )
+	                        (* let (t1, a_expr2) = expr_type_check expr2 environ in
+	                        (t1, LET(z, [LB_INIT(name_id, typ_id, al_expr)], a_expr2, Some(t1))) *)
+                ) ([], environ) lb_list in
+				let (t1, a_expr2) = expr_type_check expr2 environ in
+				(t1, LET(z, binding_tuple_list, a_expr2, Some(t1)))
+		|   ISVOID(z, e1, _) ->
+				let (t_e1, a_e1) = expr_type_check e1 environ in
+				("Bool", ISVOID(z, a_e1, Some("Bool")))
+		|   NOT(z, e1, _) ->
+				let (t_e1, a_e1) = expr_type_check e1 environ in
+				if not (t_e1 = "Bool") then failure z "Not expressions must be of Type Bool";
+				("Bool", NOT(z, a_e1, Some("Bool")))
+		|   NEGATE(z, e1, _) ->
+				let (t_e1, a_e1) = expr_type_check e1 environ in
+				if not (t_e1 = "Int") then failure z "Negate expressions must be of Type Int";
+				("Int", NEGATE(z, a_e1, Some("Int")))
+		|   PLUS(z, e1, e2, _) -> 
+				let (t_e1, a_e1) = expr_type_check e1 environ in
+				let (t_e2, a_e2) = expr_type_check e2 environ in
+				if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Plus must have dos integer arguments";
+				("Int", PLUS(z, a_e1, a_e2, Some("Int")))
+		|   MINUS(z, e1, e2, _) -> 
+				let (t_e1, a_e1) = expr_type_check e1 environ in
+				let (t_e2, a_e2) = expr_type_check e2 environ in
+				if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Minus must have dos integer arguments";
+				("Int", MINUS(z, a_e1, a_e2, Some("Int")))
+		|   TIMES(z, e1, e2, _) -> 
+				let (t_e1, a_e1) = expr_type_check e1 environ in
+				let (t_e2, a_e2) = expr_type_check e2 environ in
+				if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Times must have dos integer arguments";
+				("Int", TIMES(z, a_e1, a_e2, Some("Int")))
+		|   DIVIDE(z, e1, e2, _) -> 
+				let (t_e1, a_e1) = expr_type_check e1 environ in
+				let (t_e2, a_e2) = expr_type_check e2 environ in
+				if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Divide must have dos integer arguments";
+				("Int", DIVIDE(z, a_e1, a_e2, Some("Int")))
 
         (* and so on *)
 
@@ -765,7 +848,6 @@ and expr_type_check ast environ =
 
 (*******************************  PRINTING HELPER METHODS *******************************)
 
-let print_list lst = List.iter (fun a -> print_string (a ^ "\n")) lst;;
 
 let print_identifier ident oc = match ident with
 	IDENT(line_no, str) -> 
@@ -775,6 +857,7 @@ let print_identifier ident oc = match ident with
 let rec print_bindings bindings oc = match bindings with
 	[] -> ()
 |	LB_NO_INIT(ident, typ) :: tl  -> 
+				Printf.fprintf oc "let_binding_no_init\n";
 				print_identifier ident oc;
 				print_identifier typ oc;
 				print_bindings tl oc;
@@ -890,6 +973,7 @@ and print_expr oc expr = match expr with
                                         Printf.fprintf oc "%d\n%s\ntrue\n" line_no typ;
 |   FALSE (line_no, Some(typ)) ->
                                         Printf.fprintf oc "%d\n%s\nfalse\n" line_no typ;
+|   _ -> Printf.printf "We failed... BOOOOOO";
 ;;
 
 let print_formal oc formal = match formal with
@@ -1002,6 +1086,12 @@ let print_impl_map impl_map oc =
                  impl_map
 ;;
     
+let print_parent_map parent_map oc =
+	Printf.fprintf oc "parent_map\n%d\n" (ParentMap.cardinal parent_map);
+	ParentMap.iter (fun cls inhers -> 
+		Printf.fprintf oc "%s\n%s\n" cls inhers
+	) parent_map
+;;
 
 let rec print_ast ast oc = match ast with
 	PROGRAM(num_classes, class_list) -> 
@@ -1034,15 +1124,16 @@ with
 	let oc = open_out file in
     let classMap = class_map p in 
     let implMap = impl_map p in
+    let parentMap = parent_map p in
 
-    let environ = (ObjMap.empty, classMap, implMap, ()) in 
-    let annotated_st = type_check p environ in
+    let environ = (ObjMap.empty, classMap, implMap, parentMap) in 
+    let annotated_ast = type_check p environ in
 
         (* since print_class_map has side-effects we must ignore it *)
-        (* ignore(print_class_map classMap oc); *)
-        (* ignore(print_impl_map implMap oc); *)
-
-	(* print_ast p oc;  *)
+        ignore(print_class_map classMap oc);
+        ignore(print_impl_map implMap oc);
+        ignore(print_parent_map parentMap oc);
+		ignore(print_ast annotated_ast oc); 
 	close_out oc;
 end
 
