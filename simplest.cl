@@ -5,4 +5,12 @@ class Main inherits IO {
        z : Int in
        "5"
    };
+   a : Int;
 } ; 
+
+class A inherits Main {
+	call() : Object {
+		-- self@Main.woof("hi")
+		0
+	};
+};

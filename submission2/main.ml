@@ -767,11 +767,8 @@ and feat_type_check ast environ =
 
 and is_subclass pM t1 t2 =
 	if t1 = t2 then true else
-	if t1 = "Object" then false else begin
-		try
-			is_subclass pM (ParentMap.find t1 pM) t2
-		with Not_found -> Printf.printf "Could not find parent\n"; false
-	end
+	if t1 = "Object" then false else
+	is_subclass pM (ParentMap.find t1 pM) t2
 
 (* handle each case for an expression and return annotated ast + ret_tup type*)
 (* does glorious typechecking *)
@@ -781,10 +778,9 @@ and expr_type_check ast environ =
     (* let is_subclass pM t1 t2 = true in *)
     (* currying *)
     let is_subclass = is_subclass pM in
-    Printf.printf "In Class: %s\n" cC;
 
     match ast with
-        	ASSIGN(z, iden, expr, _) ->
+            ASSIGN(z, iden, expr, _) ->
             let IDENT(_, t0) = iden in
             let (t1, a_expr) = expr_type_check expr environ in
             if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
@@ -803,28 +799,6 @@ and expr_type_check ast environ =
                ("SELF_TYPE", NEW(z, y, Some("SELF_TYPE")))  
             else
                (t, NEW(z, y, Some(t)))
-        |   STAT_DISPATCH(z, e0, IDENT(z1, typ), IDENT(z2, meth_name), expr_list, _) ->
-        		let (t_0, a_e0) = expr_type_check e0 environ in
-        		let typs = List.fold_left (fun acc elt -> 
-        			let (t_n, a_en) = expr_type_check elt environ in
-        			acc @ [(t_n, a_en)]
-        		) [] expr_list in
-
-        		if not (is_subclass t_0 typ) then failure z "Static dispatch called on non-subclass";
-        		let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
-        		let m_rev = List.rev m_typ_list in
-        		let m_ret_typ = List.hd m_rev in 
-        		let m_typ_list = List.rev (List.tl m_rev) in
-        		List.iter2 (fun t tp -> 
-        			let (tn, _) = t in
-        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
-        		) typs m_typ_list;
-        		let ret_t = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
-        		let typs = List.map (fun elt -> 
-        			let (t_n, a_en) = elt in
-        			a_en
-        		) typs in
-        		(ret_t, STAT_DISPATCH(z, a_e0, IDENT(z1, typ), IDENT(z2, meth_name), typs, Some(ret_t)))     
         |   IF_ELSE(z, cond, e_then, e_else, _) ->
             let (cond_T, a_cond) = expr_type_check cond environ in
             if not(cond_T = "Bool") then failure z "If clause must have expression of type Bool";
@@ -917,6 +891,7 @@ and expr_type_check ast environ =
                 if List.mem t_e1 isb && not ( t_e1 = t_e2 ) then 
                     failure z "Cannot compare ints strings and bools with not typ";
                 ("Bool", LE(z, a_e1, a_e2, Some("Bool")))
+
 
 
         (* and so on *)
