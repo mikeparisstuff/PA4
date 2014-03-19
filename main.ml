@@ -730,10 +730,18 @@ and feat_type_check ast environ =
              (* TODO type check attr_no_init and attr_init *)
 
              ATTRIBUTE(IDENT(z, name), IDENT(z2, typ), Some(a_expr))
-      | METHOD(z, y, x, expr) ->
+      | METHOD(IDENT(z, name), IDENT(y, typ), formals_l, expr) ->
+              let oE = List.fold_left (fun acc fml -> 
+                                        let FORMAL(IDENT(_, fn), IDENT(_, ftyp)) = fml in
+                                        ObjMap.add fn ftyp acc
+                                      ) oE formals_l in 
+              let environ = (oE, cM, iM, pM) in
               let (ret_t, a_expr) = expr_type_check expr environ in
 
-              METHOD(z, y, x, a_expr)
+              let t0 = if typ = "SELF_TYPE" then ObjMap.find "THIS_CLASS" oE
+                            else typ in
+              if not (is_subclass pM ret_t t0) then failure z "Return type of method does not confrom to declared type";
+              METHOD(IDENT(z, name), IDENT(y, typ), formals_l, a_expr)
 
 and is_subclass pM t1 t2 = 
 	if t1 = t2 then true else
@@ -840,6 +848,29 @@ and expr_type_check ast environ =
 				let (t_e2, a_e2) = expr_type_check e2 environ in
 				if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Divide must have dos integer arguments";
 				("Int", DIVIDE(z, a_e1, a_e2, Some("Int")))
+        |   EQ(z, e1, e2, _)  ->
+                let (t_e1, a_e1) = expr_type_check e1 environ in
+                let (t_e2, a_e2) = expr_type_check e2 environ in
+                let isb = ["Int"; "String"; "Bool"] in
+                if List.mem t_e1 isb && not ( t_e1 = t_e2 ) then 
+                    failure z "Cannot compare ints strings and bools with not typ";
+                ("Bool", EQ(z, a_e1, a_e2, Some("Bool")))
+        |   LT(z, e1, e2, _)  ->
+                let (t_e1, a_e1) = expr_type_check e1 environ in
+                let (t_e2, a_e2) = expr_type_check e2 environ in
+                let isb = ["Int"; "String"; "Bool"] in
+                if List.mem t_e1 isb && not ( t_e1 = t_e2 ) then 
+                    failure z "Cannot compare ints strings and bools with not typ";
+                ("Bool", LT(z, a_e1, a_e2, Some("Bool")))
+        |   LE(z, e1, e2, _)  ->
+                let (t_e1, a_e1) = expr_type_check e1 environ in
+                let (t_e2, a_e2) = expr_type_check e2 environ in
+                let isb = ["Int"; "String"; "Bool"] in
+                if List.mem t_e1 isb && not ( t_e1 = t_e2 ) then 
+                    failure z "Cannot compare ints strings and bools with not typ";
+                ("Bool", LE(z, a_e1, a_e2, Some("Bool")))
+
+
 
         (* and so on *)
 
