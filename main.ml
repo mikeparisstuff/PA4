@@ -662,7 +662,7 @@ and parent_map ast =
 			(* Printf.printf "Adding parent relation from %s to %s\n" cls_name inhers; *)
 			ParentMap.add cls_name inhers acc
 		|	_ -> acc (* Only class that does not inherit is Object so don't worry about it *)
-	) ParentMap.empty (add_check_names class_list) in
+	) ParentMap.empty (add_check_names (List.map cm_class_list class_list)) in
 	pmap
 
 and make_m i_map = 
@@ -828,7 +828,7 @@ and expr_type_check ast environ =
         |   NEW(z, y, _) ->
             let IDENT(_, t) = y in
             if (* (ObjMap.find "THIS_CLASS" oE) *) "SELF_TYPE" = t then 
-            	let self_typ_str = "SELF_TYPE" ^ cC in
+            	let self_typ_str = "SELF_TYPE." ^ cC in
                (self_typ_str, NEW(z, y, Some(self_typ_str)))  
             else
                (t, NEW(z, y, Some(t)))
