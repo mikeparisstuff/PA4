@@ -703,8 +703,6 @@ let rec trace_to_root pM cls=
 			["Object"]
 	|	c ->
 			(* We want the result to have the root element first *)
-
-			Printf.printf "Looking for parent of %s in trace_to_root\n" c;
 			c :: (trace_to_root pM (ParentMap.find c pM))
 ;;
 
@@ -987,7 +985,8 @@ and expr_type_check ast environ =
 				) cases in
 
 				List.fold_left (fun acc elt -> 
-					let (tn, CE(IDENT(lnum, _), _, _, _)) = elt in
+					let (_, CE(IDENT(lnum, _), IDENT(_, tn), _, _)) = elt in
+					(* Printf.printf "Looking at case element of type: %s\n" tn; *)
 					if List.mem tn acc then failure lnum "Case element type bound twice";
 					tn :: acc
 				) [] case_type_info;
