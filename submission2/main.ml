@@ -716,7 +716,7 @@ let rec type_check ast environ =
     let PROGRAM(z, c_l) = ast in 
     PROGRAM(z, List.map (fun clas -> 
                         let CLASS(IDENT(_, cname), _, _, _) = clas in
-                        let oE = ObjMap.add "self" cname oE in
+                        (* let oE = ObjMap.add "self" cname oE in *)
 
                         let oE = List.fold_left (fun acc elt -> match elt with
                         	ATTRIBUTE(IDENT(_, name), IDENT(_, typ), _) ->
@@ -742,7 +742,7 @@ and feat_type_check ast environ =
             ATTRIBUTE(name_ident, typ_ident, None) 
 
       | ATTRIBUTE(IDENT(z, name), IDENT(z2, typ), Some(expr)) -> (* ATTR INIT *)
-
+      		let typ = if typ = "SELF_TYPE" then ("SELF_TYPE." ^ cC) else typ in
              let (ret_t, a_expr) = expr_type_check expr environ in 
 
              if not (is_subclass pM ret_t typ) then failure z "Attribute initiazed to expression of type that does not conform to static type";
@@ -760,15 +760,39 @@ and feat_type_check ast environ =
               let environ = (oE, mM, cC, pM) in
               let (ret_t, a_expr) = expr_type_check expr environ in
 
-              let t0 = if typ = "SELF_TYPE" then cC (* ObjMap.find "THIS_CLASS" oE *)
-                            else typ in
+              let t0 = if typ = "SELF_TYPE" then ("SELF_TYPE." ^ cC) else typ in
               if not (is_subclass pM ret_t t0) then failure z "Return type of method does not confrom to declared type";
               METHOD(IDENT(z, name), IDENT(y, typ), formals_l, a_expr)
 
 and is_subclass pM t1 t2 =
-	if t1 = t2 then true else
-	if t1 = "Object" then false else
-	is_subclass pM (ParentMap.find t1 pM) t2
+	let check typ1 typ2 = 
+			if typ1 = typ2 then true else
+			if typ1 = "Object" then false else begin
+				try
+					is_subclass pM (ParentMap.find typ1 pM) typ2
+				with Not_found -> Printf.printf "Could not find parent\n"; false
+			end
+	in
+
+	let self_split_check1 = Str.split (Str.regexp "[.]") t1 in
+	let self_split_check2 = Str.split (Str.regexp "[.]") t2 in
+	match ((List.length self_split_check1), (List.length self_split_check2)) with
+		(2,2) -> if (List.nth self_split_check1 1) = (List.nth self_split_check2 1) then true else false
+	|	(1,2) -> 
+			let t2 = List.nth self_split_check2 1 in
+			check t1 t2
+	|	(2,1) ->
+			let t1 = List.nth self_split_check1 1 in
+			check t1 t2
+	|	(1,1) ->
+			check t1 t2
+
+and type_check_expr_list expr_list environ= 
+	let typs = List.fold_left (fun acc elt -> 
+        			let (t_n, a_en) = expr_type_check elt environ in
+        			acc @ [(t_n, a_en)]
+        		) [] expr_list in
+	typs
 
 (* handle each case for an expression and return annotated ast + ret_tup type*)
 (* does glorious typechecking *)
@@ -778,9 +802,17 @@ and expr_type_check ast environ =
     (* let is_subclass pM t1 t2 = true in *)
     (* currying *)
     let is_subclass = is_subclass pM in
+    Printf.printf "In Class: %s\n" cC;
 
     match ast with
-            ASSIGN(z, iden, expr, _) ->
+    		IDENTIFIER(z, IDENT(z1, name), _) -> 
+		   		if name = "self" then
+		   			let typ_name = "SELF_TYPE." ^ cC in
+		   			(typ_name, IDENTIFIER(z, IDENT(z1, name), Some(typ_name )))
+		   		else
+		   			let t = ObjMap.find name oE in
+		   			(t, IDENTIFIER(z, IDENT(z1, name), Some(t) ))
+        |	ASSIGN(z, iden, expr, _) ->
             let IDENT(_, t0) = iden in
             let (t1, a_expr) = expr_type_check expr environ in
             if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
@@ -795,10 +827,77 @@ and expr_type_check ast environ =
             ("String", STRING(z, y, Some("String")))
         |   NEW(z, y, _) ->
             let IDENT(_, t) = y in
-            if (* (ObjMap.find "THIS_CLASS" oE) *) cC = t then 
-               ("SELF_TYPE", NEW(z, y, Some("SELF_TYPE")))  
+            if (* (ObjMap.find "THIS_CLASS" oE) *) "SELF_TYPE" = t then 
+            	let self_typ_str = "SELF_TYPE" ^ cC in
+               (self_typ_str, NEW(z, y, Some(self_typ_str)))  
             else
                (t, NEW(z, y, Some(t)))
+        |   DYN_DISPATCH(z, e0, IDENT(z1, meth_name), expr_list, _) ->
+        		let (t_0, a_e0) = expr_type_check e0 environ in
+        		let typs = type_check_expr_list expr_list environ in
+        		let t_0p = if t_0 = ("SELF_TYPE." ^ cC) then cC else t_0 in
+				
+				(* Get out Tn+1 and compare with our actual parameter types *)
+				let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+        		let m_rev = List.rev m_typ_list in
+        		let m_ret_typ = List.hd m_rev in 
+        		let m_typ_list = List.rev (List.tl m_rev) in
+        		List.iter2 (fun t tp -> 
+        			let (tn, _) = t in
+        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
+        		) typs m_typ_list;
+
+        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+        		let a_e_list = List.map (fun elt -> 
+        			let (t_n, a_en) = elt in
+        			a_en
+        		) typs in
+        		(tnp1, DYN_DISPATCH(z, a_e0, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
+        |   SELF_DISPATCH(z, IDENT(z1, meth_name), expr_list, _) ->
+        		let t_0 = "SELF_TYPE." ^ cC in
+        		let typs = type_check_expr_list expr_list environ in
+        		let t_0p = if t_0 = ("SELF_TYPE." ^ cC) then cC else t_0 in
+				
+				(* Get out Tn+1 and compare with our actual parameter types *)
+				let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+        		let m_rev = List.rev m_typ_list in
+        		let m_ret_typ = List.hd m_rev in 
+        		let m_typ_list = List.rev (List.tl m_rev) in
+        		List.iter2 (fun t tp -> 
+        			let (tn, _) = t in
+        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
+        		) typs m_typ_list;
+
+        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+        		let a_e_list = List.map (fun elt -> 
+        			let (t_n, a_en) = elt in
+        			a_en
+        		) typs in
+        		(tnp1, SELF_DISPATCH(z, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
+
+        |   STAT_DISPATCH(z, e0, IDENT(z1, typ), IDENT(z2, meth_name), expr_list, _) ->
+        		let (t_0, a_e0) = expr_type_check e0 environ in
+        		let typs = List.fold_left (fun acc elt -> 
+        			let (t_n, a_en) = expr_type_check elt environ in
+        			acc @ [(t_n, a_en)]
+        		) [] expr_list in
+
+        		if not (is_subclass t_0 typ) then failure z "Static dispatch called on non-subclass";
+
+        		let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+        		let m_rev = List.rev m_typ_list in
+        		let m_ret_typ = List.hd m_rev in 
+        		let m_typ_list = List.rev (List.tl m_rev) in
+        		List.iter2 (fun t tp -> 
+        			let (tn, _) = t in
+        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
+        		) typs m_typ_list;
+        		let ret_t = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+        		let typs = List.map (fun elt -> 
+        			let (t_n, a_en) = elt in
+        			a_en
+        		) typs in
+        		(ret_t, STAT_DISPATCH(z, a_e0, IDENT(z1, typ), IDENT(z2, meth_name), typs, Some(ret_t)))     
         |   IF_ELSE(z, cond, e_then, e_else, _) ->
             let (cond_T, a_cond) = expr_type_check cond environ in
             if not(cond_T = "Bool") then failure z "If clause must have expression of type Bool";
@@ -822,7 +921,7 @@ and expr_type_check ast environ =
                 	let (oE, mM, cC, pM) = environ in
 	                match lb with 
 	                    LB_NO_INIT(IDENT(_, e0), IDENT(_, typ)) ->
-	                    let t0 = if typ = "SELF_TYPE" then cC (* ObjMap.find "THIS_CLASS" oE *) else typ in
+	                    let t0 = if typ = "SELF_TYPE" then ("SELF_TYPE." ^ cC) (* ObjMap.find "THIS_CLASS" oE *) else typ in
 	                    let environ = (ObjMap.add e0 t0 oE, mM, cC, pM) in
 	                    (btl @ [lb], environ )
 	                    (* let (t1, a_expr2) = expr_type_check expr2 environ in
@@ -830,6 +929,7 @@ and expr_type_check ast environ =
 	                |   LB_INIT(name_id, typ_id, l_expr) ->
 	                        let IDENT(_, name) = name_id in
 	                        let IDENT(_, typ) = typ_id in
+	                        let typ = if typ = "SELF_TYPE" then ("SELF_TYPE." ^ cC) else typ in
 	                        let (l_typ, al_expr) = expr_type_check l_expr environ in
 	                        if not(is_subclass l_typ typ) then failure z "let expr must return sublcass";
 	                        let environ = (ObjMap.add name typ oE, mM, cC, pM) in
@@ -839,6 +939,34 @@ and expr_type_check ast environ =
                 ) ([], environ) lb_list in
 				let (t1, a_expr2) = expr_type_check expr2 environ in
 				(t1, LET(z, binding_tuple_list, a_expr2, Some(t1)))
+		|   CASE(z, e0, cases, _) -> 
+
+				let (t0, a_e0) = expr_type_check e0 environ in
+				let case_type_info = List.map (fun elt -> 
+					let CE(IDENT(z, name), IDENT(z1, typ), expr, _) = elt in
+					(* Are we allowed to have SELF_TYPE in case expressions? *)
+					(* Also need check for identical case statements here *)
+					if typ = "SELF_TYPE" then failure z "Case Elements cannot have type SELF_TYPE";
+					let environ = ( (ObjMap.add name typ oE), mM, cC, pM  ) in 
+					let (t_n, a_en) = expr_type_check expr environ in
+					(t_n, CE(IDENT(z, name), IDENT(z1, typ), a_en, Some(t_n)))
+				) cases in
+				let (start_acc, _) = List.hd case_type_info in
+				let final_typ = List.fold_left ( fun acc elt -> 
+					let (t_n, _) = elt in
+					let lubbed = lub pM acc t_n in
+					lubbed
+				) start_acc (List.tl case_type_info) in
+				let annotated_cases = List.map (fun elt -> 
+					let (_, ce) = elt in
+					ce
+				) case_type_info in
+				(final_typ, CASE(z, a_e0, annotated_cases, Some(final_typ)))
+		| 	WHILE(z, e1, e2, _) ->
+				let (t1, a_e1) = expr_type_check e1 environ in
+				if not (t1 = "Bool") then failure z "While predicate must have type Bool";	
+				let (t2, a_e2) = expr_type_check e2 environ in
+				("Object", WHILE(z, a_e1, a_e2, Some("Object")))
 		|   ISVOID(z, e1, _) ->
 				let (t_e1, a_e1) = expr_type_check e1 environ in
 				("Bool", ISVOID(z, a_e1, Some("Bool")))
@@ -893,7 +1021,6 @@ and expr_type_check ast environ =
                 ("Bool", LE(z, a_e1, a_e2, Some("Bool")))
 
 
-
         (* and so on *)
 
 ;;
@@ -931,18 +1058,29 @@ and print_case_elements elems oc = match elems with
 			print_expr oc e;
 			print_case_elements tl oc
 
+and check_typ typ = 
+	let l = Str.split (Str.regexp "[.]") typ in
+	if (List.length l) > 1 then
+		List.nth l 0
+	else
+		typ
+
 and print_expr oc expr = match expr with
     INT(line_no, value, Some(typ)) ->
-                                        Printf.fprintf oc "%d\n%s\ninteger\n%d\n" line_no typ value;
+    				let typ = check_typ typ in
+					Printf.fprintf oc "%d\n%s\ninteger\n%d\n" line_no typ value;
 |   STRING (line_no, str, Some(typ)) -> 
-                                        Printf.fprintf oc "%d\n%s\nstring\n%s\n" line_no typ str;
+					let typ = check_typ typ in
+					Printf.fprintf oc "%d\n%s\nstring\n%s\n" line_no typ str;
 |   DYN_DISPATCH (line_no, e, meth, exprs, Some(typ)) ->
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\ndynamic_dispatch\n" line_no typ;
 					print_expr oc e;
 					print_identifier meth oc;
 					Printf.fprintf oc "%d\n" (List.length exprs);
 					List.iter (print_expr oc) exprs;
 |   STAT_DISPATCH (line_no, e, dec_typ, meth, exprs, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nstatic_dispatch\n" line_no typ;
 					print_expr oc e;
 					print_identifier dec_typ oc;
@@ -950,81 +1088,102 @@ and print_expr oc expr = match expr with
 					Printf.fprintf oc "%d\n" (List.length exprs);
 					List.iter (print_expr oc) exprs;
 |   SELF_DISPATCH (line_no, meth, exprs, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nself_dispatch\n" line_no typ;
 					print_identifier meth oc;
 					Printf.fprintf oc "%d\n" (List.length exprs);
 					List.iter (print_expr oc) exprs;
 |   CASE (line_no, expr, elems, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\ncase\n" line_no typ;
 					print_expr oc expr;
 					Printf.fprintf oc "%d\n" (List.length elems);
 					print_case_elements elems oc;
 |   ASSIGN (line_no, ident, expr, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nassign\n" line_no typ;
 					print_identifier ident oc;
 					print_expr oc expr;
 |   LET (line_no, bindings, expr, Some(typ)) ->
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nlet\n%d\n" line_no typ (List.length bindings);
 					print_bindings bindings oc;
 					print_expr oc expr;
 |   IF_ELSE (line_no, expr1, expr2, expr3, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nif\n" line_no typ;
 					print_expr oc expr1;
 					print_expr oc expr2;
 					print_expr oc expr3;
 |   WHILE (line_no, expr, expr1, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nwhile\n" line_no typ;
 					print_expr oc expr;
 					print_expr oc expr1;
 |   BLOCK (line_no, exprs, Some(typ)) ->
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nblock\n%d\n" line_no typ (List.length exprs);
 					List.iter (print_expr oc) exprs;
 |   IDENTIFIER (line_no, ident, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nidentifier\n" line_no typ;
 					print_identifier ident oc;
 |   PLUS (line_no, lhs, rhs, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nplus\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   MINUS (line_no, lhs, rhs, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nminus\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   TIMES (line_no, lhs, rhs, Some(typ)) -> 
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\ntimes\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   DIVIDE (line_no, lhs, rhs, Some(typ)) -> 
-                                        Printf.fprintf oc "%d\n%s\ndivide\n" line_no typ;
+					let typ = check_typ typ in
+                    Printf.fprintf oc "%d\n%s\ndivide\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   LT (line_no, lhs, rhs, Some(typ)) ->
+					let typ = check_typ typ in
 					Printf.fprintf oc "%d\n%s\nlt\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   LE (line_no, expr1, expr2, Some(typ)) -> 
-                                        Printf.fprintf oc "%d\n%s\nle\n" line_no typ;
+					let typ = check_typ typ in
+					Printf.fprintf oc "%d\n%s\nle\n" line_no typ;
 					print_expr oc expr1;
 					print_expr oc expr2;
 |   EQ (line_no, expr1, expr2, Some(typ)) -> 
+					let typ = check_typ typ in
                                         Printf.fprintf oc "%d\n%s\neq\n" line_no typ;
 					print_expr oc expr1;
 					print_expr oc expr2;
 |   NOT (line_no, expr, Some(typ)) -> 
+					let typ = check_typ typ in
                                         Printf.fprintf oc "%d\n%s\nnot\n" line_no typ;
 					print_expr oc expr;
 |   NEGATE (line_no, expr, Some(typ)) -> 
+					let typ = check_typ typ in
                                         Printf.fprintf oc "%d\n%s\nnegate\n" line_no typ;
 					print_expr oc expr;
 |   ISVOID (line_no, expr, Some(typ)) -> 
+					let typ = check_typ typ in
                                         Printf.fprintf oc "%d\n%s\nisvoid\n" line_no typ;
 					print_expr oc expr;
 |   NEW (line_no, ident, Some(typ)) -> 
+					let typ = check_typ typ in
                                         Printf.fprintf oc "%d\n%s\nnew\n" line_no typ;
 					print_identifier ident oc;
 |   TRUE (line_no, Some(typ)) ->
+					let typ = check_typ typ in
                                         Printf.fprintf oc "%d\n%s\ntrue\n" line_no typ;
 |   FALSE (line_no, Some(typ)) ->
+					let typ = check_typ typ in
                                         Printf.fprintf oc "%d\n%s\nfalse\n" line_no typ;
 |   _ -> Printf.printf "We failed... BOOOOOO\n";
 ;;
@@ -1201,5 +1360,6 @@ with
         ignore(print_parent_map parentMap oc);
 		ignore(print_ast annotated_ast oc); 
 	close_out oc;
+
 end
 
