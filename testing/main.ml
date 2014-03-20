@@ -554,9 +554,7 @@ and formals_equal fml1 fml2 =
         let bad_matches = List.filter (fun (x, y) ->
                                     let FORMAL(IDENT(_, a), IDENT(_, b)) = x in
                                     let FORMAL(IDENT(_, c), IDENT(_, d)) = y in
-                                    print_endline a;
-                                    print_endline c;
-                                    not(a = c && b = d)
+                                    not(b = d)
                                   )
                                   both in
         0 = List.length bad_matches
@@ -607,6 +605,20 @@ and impl_map ast =
 
         (* builds a FeatMap which is a map of method name METHOD pairs *)
         let make_method_map ih_attr_list meth_list cls = 
+
+			        let replace_or_add f_l add_fname add_feat cls = begin
+						let (was_replaced, f_l) = List.fold_left (fun acc elt ->
+							let (cur_fname, v) = elt in
+							let (already_added, acc_list) = acc in
+							if cur_fname = add_fname then
+								(true, (acc_list @ [(add_fname, (add_feat, cls))]))
+							else
+								(already_added, (acc_list @ [elt]))
+						) (false, []) f_l in
+						if not was_replaced then (f_l @ [(add_fname, (add_feat, cls))]) else f_l
+					end
+					in
+
                     List.fold_left (fun fl feat -> 
                                         let METHOD(IDENT(ln, fname), IDENT(tln, typ), formals, _) = feat in
                                         (* check if type returned is in our list of valid types *)
@@ -624,7 +636,8 @@ and impl_map ast =
                                                 failure ln "Return type of method redefined";
                                         end;
                                         (* (method name, feat, cls) tells us that this feature was defined in this class *)
-                                        fl @ [(fname, (feat, cls))] 
+                                        replace_or_add fl fname feat cls
+                                        (* fl @ [(fname, (feat, cls))]  *)
                                    )
                                     ih_attr_list
                                     meth_list
@@ -690,18 +703,27 @@ and make_m i_map =
 (* We are essentially tracing the path from each node to the root node Object
 	and then tracing back the two paths to see where they diverge. This point of
 	divergence is the least common anscestor in the inheritance heirarchy *)
+let check_typ_name typ = 
+	let l = Str.split (Str.regexp "[.]") typ in
+	if (List.length l) > 1 then
+		List.nth l 1
+	else
+		typ
+;;
 let rec trace_to_root pM cls= 
 	match cls with
 		"Object" -> 
 			(* We have finished tracing to the root *)
 			["Object"]
 	|	c ->
+        let cls = check_typ_name cls in
 			(* We want the result to have the root element first *)
-			c :: (trace_to_root pM (ParentMap.find c pM))
+			c :: (trace_to_root pM (ParentMap.find cls pM))
 ;;
 
 (* LUB! it, either fails or returns the correct type *)
 let lub pM class1 class2 = 
+    
 	let (trace1, trace2) = (trace_to_root pM class1, trace_to_root pM class2) in
 	let our_lub = List.fold_left (fun acc elt -> if (List.mem elt trace2 && acc = "") then elt else acc) "" trace1 in
 	our_lub;;
@@ -761,11 +783,13 @@ and feat_type_check ast environ =
               let (ret_t, a_expr) = expr_type_check expr environ in
 
               let t0 = if typ = "SELF_TYPE" then ("SELF_TYPE." ^ cC) else typ in
+              (* Printf.printf "In class: %s ,  t0 = %s : typ = %s\n" cC t0 typ; *)
               if not (is_subclass pM ret_t t0) then failure z "Return type of method does not confrom to declared type";
               METHOD(IDENT(z, name), IDENT(y, typ), formals_l, a_expr)
 
 and is_subclass pM t1 t2 =
 	let check typ1 typ2 = 
+			(* Printf.printf "Comparing: %s %s\n" t1 t2; *)
 			if typ1 = typ2 then true else
 			if typ1 = "Object" then false else begin
 				try
@@ -802,7 +826,6 @@ and expr_type_check ast environ =
     (* let is_subclass pM t1 t2 = true in *)
     (* currying *)
     let is_subclass = is_subclass pM in
-    Printf.printf "In Class: %s\n" cC;
 
     match ast with
     		IDENTIFIER(z, IDENT(z1, name), _) -> 
@@ -816,11 +839,17 @@ and expr_type_check ast environ =
 		   			with
 		   			| Not_found -> failure z ("Unbound identifier " ^ name); ("", TRUE(0, None))
 		   		end
-        |	ASSIGN(z, iden, expr, _) ->
-            let IDENT(_, t0) = iden in
-            let (t1, a_expr) = expr_type_check expr environ in
-            if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
-            (t1, ASSIGN(z, iden, a_expr, Some(t1)))
+        |	ASSIGN(z, iden, expr, _) -> begin
+            let IDENT(_, name) = iden in
+            try 
+                let t0 = ObjMap.find name oE in
+                let (t1, a_expr) = expr_type_check expr environ in
+                if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
+                (t1, ASSIGN(z, iden, a_expr, Some(t1)))
+            with
+                | Not_found -> failure z ("Assignment on unbound iden " ^ name);
+                               ("", TRUE(0, None))
+            end
         |   TRUE(z, _) ->
             ("Bool", TRUE(z, Some("Bool")))
         |   FALSE(z,  _) ->
@@ -843,7 +872,7 @@ and expr_type_check ast environ =
 				
 				(* Get out Tn+1 and compare with our actual parameter types *)
 				try
-					let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+					let m_typ_list = List.assoc meth_name (MethodMap.find t_0p mM) in
 	        		let m_rev = List.rev m_typ_list in
 	        		let m_ret_typ = List.hd m_rev in 
 	        		let m_typ_list = List.rev (List.tl m_rev) in
@@ -860,6 +889,7 @@ and expr_type_check ast environ =
 	        		(tnp1, DYN_DISPATCH(z, a_e0, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
 				with
 				| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0,None))
+                | Invalid_argument(_) -> failure z "Invalid number of arguments"; ("", TRUE(0, None))
 			end
 
         |   SELF_DISPATCH(z, IDENT(z1, meth_name), expr_list, _) -> begin
@@ -886,6 +916,7 @@ and expr_type_check ast environ =
 	        		(tnp1, SELF_DISPATCH(z, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
 				with
 				| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0, None))
+                | Invalid_argument(_) -> failure z "Invalid number of arguments"; ("", TRUE(0, None))
 					
         	end
 
@@ -915,6 +946,7 @@ and expr_type_check ast environ =
 	        		(ret_t, STAT_DISPATCH(z, a_e0, IDENT(z1, typ), IDENT(z2, meth_name), typs, Some(ret_t)))    
         		with
         		| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0, None))
+                | Invalid_argument(_) -> failure z "Invalid number of arguments"; ("", TRUE(0, None))
         	end 
         |   IF_ELSE(z, cond, e_then, e_else, _) ->
             let (cond_T, a_cond) = expr_type_check cond environ in
@@ -971,7 +1003,8 @@ and expr_type_check ast environ =
 				) cases in
 
 				List.fold_left (fun acc elt -> 
-					let (tn, CE(IDENT(lnum, _), _, _, _)) = elt in
+					let (_, CE(IDENT(lnum, _), IDENT(_, tn), _, _)) = elt in
+					(* Printf.printf "Looking at case element of type: %s\n" tn; *)
 					if List.mem tn acc then failure lnum "Case element type bound twice";
 					tn :: acc
 				) [] case_type_info;
@@ -1077,7 +1110,7 @@ and print_case_elements elems oc = match elems with
 	[] -> ()
 |   hd :: tl -> match hd with 
 		CE (a, b, e, Some(typ)) ->
-                        Printf.fprintf oc "%s\n" typ;
+           (*             Printf.fprintf oc "%s\n" typ; *)
 			print_identifier a oc;
 			print_identifier b oc;
 			print_expr oc e;

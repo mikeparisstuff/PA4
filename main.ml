@@ -554,7 +554,7 @@ and formals_equal fml1 fml2 =
         let bad_matches = List.filter (fun (x, y) ->
                                     let FORMAL(IDENT(_, a), IDENT(_, b)) = x in
                                     let FORMAL(IDENT(_, c), IDENT(_, d)) = y in
-                                    not(a = c && b = d)
+                                    not(b = d)
                                   )
                                   both in
         0 = List.length bad_matches
@@ -711,18 +711,19 @@ let check_typ_name typ =
 		typ
 ;;
 let rec trace_to_root pM cls= 
-	let cls = check_typ_name cls in
 	match cls with
 		"Object" -> 
 			(* We have finished tracing to the root *)
 			["Object"]
 	|	c ->
+        let cls = check_typ_name cls in
 			(* We want the result to have the root element first *)
-			c :: (trace_to_root pM (ParentMap.find c pM))
+			c :: (trace_to_root pM (ParentMap.find cls pM))
 ;;
 
 (* LUB! it, either fails or returns the correct type *)
 let lub pM class1 class2 = 
+    
 	let (trace1, trace2) = (trace_to_root pM class1, trace_to_root pM class2) in
 	let our_lub = List.fold_left (fun acc elt -> if (List.mem elt trace2 && acc = "") then elt else acc) "" trace1 in
 	our_lub;;
@@ -1109,7 +1110,7 @@ and print_case_elements elems oc = match elems with
 	[] -> ()
 |   hd :: tl -> match hd with 
 		CE (a, b, e, Some(typ)) ->
-                        Printf.fprintf oc "%s\n" typ;
+           (*             Printf.fprintf oc "%s\n" typ; *)
 			print_identifier a oc;
 			print_identifier b oc;
 			print_expr oc e;

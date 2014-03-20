@@ -1,18 +1,20 @@
 class Main inherits IO {
-  main() : Object {
-       let x : Int <- 5555555 + 5323223,
-       y : String <- "Hello",
-       z : Int in
-       "5"
-   };
-   a : SELF_TYPE;
-   woof(s:String) : Object{
-   	s
+  main() : SELF_TYPE {
+        out_string("asdf")
    };
 } ; 
 
-class A inherits Main {
-	call() : Object {
-		self.woof("hi")
-	};
-};
+
+class Comp inherits IO{
+    y : Int;
+    x : Int;
+
+    print() : Object {
+        if y = 0
+            then out_int(x)
+            else out_int(x)
+        fi
+    };
+
+
+}; 
