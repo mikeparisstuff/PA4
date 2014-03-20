@@ -554,8 +554,6 @@ and formals_equal fml1 fml2 =
         let bad_matches = List.filter (fun (x, y) ->
                                     let FORMAL(IDENT(_, a), IDENT(_, b)) = x in
                                     let FORMAL(IDENT(_, c), IDENT(_, d)) = y in
-                                    print_endline a;
-                                    print_endline c;
                                     not(a = c && b = d)
                                   )
                                   both in
@@ -607,6 +605,20 @@ and impl_map ast =
 
         (* builds a FeatMap which is a map of method name METHOD pairs *)
         let make_method_map ih_attr_list meth_list cls = 
+
+			        let replace_or_add f_l add_fname add_feat cls = begin
+						let (was_replaced, f_l) = List.fold_left (fun acc elt ->
+							let (cur_fname, v) = elt in
+							let (already_added, acc_list) = acc in
+							if cur_fname = add_fname then
+								(true, (acc_list @ [(add_fname, (add_feat, cls))]))
+							else
+								(already_added, (acc_list @ [elt]))
+						) (false, []) f_l in
+						if not was_replaced then (f_l @ [(add_fname, (add_feat, cls))]) else f_l
+					end
+					in
+
                     List.fold_left (fun fl feat -> 
                                         let METHOD(IDENT(ln, fname), IDENT(tln, typ), formals, _) = feat in
                                         (* check if type returned is in our list of valid types *)
@@ -624,7 +636,8 @@ and impl_map ast =
                                                 failure ln "Return type of method redefined";
                                         end;
                                         (* (method name, feat, cls) tells us that this feature was defined in this class *)
-                                        fl @ [(fname, (feat, cls))] 
+                                        replace_or_add fl fname feat cls
+                                        (* fl @ [(fname, (feat, cls))]  *)
                                    )
                                     ih_attr_list
                                     meth_list
@@ -662,7 +675,7 @@ and parent_map ast =
 			(* Printf.printf "Adding parent relation from %s to %s\n" cls_name inhers; *)
 			ParentMap.add cls_name inhers acc
 		|	_ -> acc (* Only class that does not inherit is Object so don't worry about it *)
-	) ParentMap.empty (add_check_names class_list) in
+	) ParentMap.empty (add_check_names (List.map cm_class_list class_list)) in
 	pmap
 
 and make_m i_map = 
@@ -690,7 +703,15 @@ and make_m i_map =
 (* We are essentially tracing the path from each node to the root node Object
 	and then tracing back the two paths to see where they diverge. This point of
 	divergence is the least common anscestor in the inheritance heirarchy *)
+let check_typ_name typ = 
+	let l = Str.split (Str.regexp "[.]") typ in
+	if (List.length l) > 1 then
+		List.nth l 1
+	else
+		typ
+;;
 let rec trace_to_root pM cls= 
+	let cls = check_typ_name cls in
 	match cls with
 		"Object" -> 
 			(* We have finished tracing to the root *)
@@ -802,21 +823,30 @@ and expr_type_check ast environ =
     (* let is_subclass pM t1 t2 = true in *)
     (* currying *)
     let is_subclass = is_subclass pM in
-    Printf.printf "In Class: %s\n" cC;
 
     match ast with
     		IDENTIFIER(z, IDENT(z1, name), _) -> 
 		   		if name = "self" then
 		   			let typ_name = "SELF_TYPE." ^ cC in
 		   			(typ_name, IDENTIFIER(z, IDENT(z1, name), Some(typ_name )))
-		   		else
-		   			let t = ObjMap.find name oE in
-		   			(t, IDENTIFIER(z, IDENT(z1, name), Some(t) ))
-        |	ASSIGN(z, iden, expr, _) ->
-            let IDENT(_, t0) = iden in
-            let (t1, a_expr) = expr_type_check expr environ in
-            if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
-            (t1, ASSIGN(z, iden, a_expr, Some(t1)))
+		   		else begin
+		   			try
+		   				let t = ObjMap.find name oE in
+		   				(t, IDENTIFIER(z, IDENT(z1, name), Some(t) ))
+		   			with
+		   			| Not_found -> failure z ("Unbound identifier " ^ name); ("", TRUE(0, None))
+		   		end
+        |	ASSIGN(z, iden, expr, _) -> begin
+            let IDENT(_, name) = iden in
+            try 
+                let t0 = ObjMap.find name oE in
+                let (t1, a_expr) = expr_type_check expr environ in
+                if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
+                (t1, ASSIGN(z, iden, a_expr, Some(t1)))
+            with
+                | Not_found -> failure z ("Assignment on unbound iden " ^ name);
+                               ("", TRUE(0, None))
+            end
         |   TRUE(z, _) ->
             ("Bool", TRUE(z, Some("Bool")))
         |   FALSE(z,  _) ->
@@ -828,54 +858,66 @@ and expr_type_check ast environ =
         |   NEW(z, y, _) ->
             let IDENT(_, t) = y in
             if (* (ObjMap.find "THIS_CLASS" oE) *) "SELF_TYPE" = t then 
-            	let self_typ_str = "SELF_TYPE" ^ cC in
+            	let self_typ_str = "SELF_TYPE." ^ cC in
                (self_typ_str, NEW(z, y, Some(self_typ_str)))  
             else
                (t, NEW(z, y, Some(t)))
-        |   DYN_DISPATCH(z, e0, IDENT(z1, meth_name), expr_list, _) ->
+        |   DYN_DISPATCH(z, e0, IDENT(z1, meth_name), expr_list, _) -> begin
         		let (t_0, a_e0) = expr_type_check e0 environ in
         		let typs = type_check_expr_list expr_list environ in
         		let t_0p = if t_0 = ("SELF_TYPE." ^ cC) then cC else t_0 in
 				
 				(* Get out Tn+1 and compare with our actual parameter types *)
-				let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
-        		let m_rev = List.rev m_typ_list in
-        		let m_ret_typ = List.hd m_rev in 
-        		let m_typ_list = List.rev (List.tl m_rev) in
-        		List.iter2 (fun t tp -> 
-        			let (tn, _) = t in
-        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
-        		) typs m_typ_list;
+				try
+					let m_typ_list = List.assoc meth_name (MethodMap.find t_0p mM) in
+	        		let m_rev = List.rev m_typ_list in
+	        		let m_ret_typ = List.hd m_rev in 
+	        		let m_typ_list = List.rev (List.tl m_rev) in
+	        		List.iter2 (fun t tp -> 
+	        			let (tn, _) = t in
+	        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
+	        		) typs m_typ_list;
 
-        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
-        		let a_e_list = List.map (fun elt -> 
-        			let (t_n, a_en) = elt in
-        			a_en
-        		) typs in
-        		(tnp1, DYN_DISPATCH(z, a_e0, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
-        |   SELF_DISPATCH(z, IDENT(z1, meth_name), expr_list, _) ->
+	        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+	        		let a_e_list = List.map (fun elt -> 
+	        			let (t_n, a_en) = elt in
+	        			a_en
+	        		) typs in
+	        		(tnp1, DYN_DISPATCH(z, a_e0, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
+				with
+				| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0,None))
+                | Invalid_argument(_) -> failure z "Invalid number of arguments"; ("", TRUE(0, None))
+			end
+
+        |   SELF_DISPATCH(z, IDENT(z1, meth_name), expr_list, _) -> begin
         		let t_0 = "SELF_TYPE." ^ cC in
         		let typs = type_check_expr_list expr_list environ in
         		let t_0p = if t_0 = ("SELF_TYPE." ^ cC) then cC else t_0 in
 				
 				(* Get out Tn+1 and compare with our actual parameter types *)
-				let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
-        		let m_rev = List.rev m_typ_list in
-        		let m_ret_typ = List.hd m_rev in 
-        		let m_typ_list = List.rev (List.tl m_rev) in
-        		List.iter2 (fun t tp -> 
-        			let (tn, _) = t in
-        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
-        		) typs m_typ_list;
+				try
+					let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+	        		let m_rev = List.rev m_typ_list in
+	        		let m_ret_typ = List.hd m_rev in 
+	        		let m_typ_list = List.rev (List.tl m_rev) in
+	        		List.iter2 (fun t tp -> 
+	        			let (tn, _) = t in
+	        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
+	        		) typs m_typ_list;
 
-        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
-        		let a_e_list = List.map (fun elt -> 
-        			let (t_n, a_en) = elt in
-        			a_en
-        		) typs in
-        		(tnp1, SELF_DISPATCH(z, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
+	        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+	        		let a_e_list = List.map (fun elt -> 
+	        			let (t_n, a_en) = elt in
+	        			a_en
+	        		) typs in
+	        		(tnp1, SELF_DISPATCH(z, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
+				with
+				| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0, None))
+                | Invalid_argument(_) -> failure z "Invalid number of arguments"; ("", TRUE(0, None))
+					
+        	end
 
-        |   STAT_DISPATCH(z, e0, IDENT(z1, typ), IDENT(z2, meth_name), expr_list, _) ->
+        |   STAT_DISPATCH(z, e0, IDENT(z1, typ), IDENT(z2, meth_name), expr_list, _) -> begin
         		let (t_0, a_e0) = expr_type_check e0 environ in
         		let typs = List.fold_left (fun acc elt -> 
         			let (t_n, a_en) = expr_type_check elt environ in
@@ -884,20 +926,25 @@ and expr_type_check ast environ =
 
         		if not (is_subclass t_0 typ) then failure z "Static dispatch called on non-subclass";
 
-        		let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
-        		let m_rev = List.rev m_typ_list in
-        		let m_ret_typ = List.hd m_rev in 
-        		let m_typ_list = List.rev (List.tl m_rev) in
-        		List.iter2 (fun t tp -> 
-        			let (tn, _) = t in
-        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
-        		) typs m_typ_list;
-        		let ret_t = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
-        		let typs = List.map (fun elt -> 
-        			let (t_n, a_en) = elt in
-        			a_en
-        		) typs in
-        		(ret_t, STAT_DISPATCH(z, a_e0, IDENT(z1, typ), IDENT(z2, meth_name), typs, Some(ret_t)))     
+        		try
+        			let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+	        		let m_rev = List.rev m_typ_list in
+	        		let m_ret_typ = List.hd m_rev in 
+	        		let m_typ_list = List.rev (List.tl m_rev) in
+	        		List.iter2 (fun t tp -> 
+	        			let (tn, _) = t in
+	        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
+	        		) typs m_typ_list;
+	        		let ret_t = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+	        		let typs = List.map (fun elt -> 
+	        			let (t_n, a_en) = elt in
+	        			a_en
+	        		) typs in
+	        		(ret_t, STAT_DISPATCH(z, a_e0, IDENT(z1, typ), IDENT(z2, meth_name), typs, Some(ret_t)))    
+        		with
+        		| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0, None))
+                | Invalid_argument(_) -> failure z "Invalid number of arguments"; ("", TRUE(0, None))
+        	end 
         |   IF_ELSE(z, cond, e_then, e_else, _) ->
             let (cond_T, a_cond) = expr_type_check cond environ in
             if not(cond_T = "Bool") then failure z "If clause must have expression of type Bool";
@@ -951,6 +998,14 @@ and expr_type_check ast environ =
 					let (t_n, a_en) = expr_type_check expr environ in
 					(t_n, CE(IDENT(z, name), IDENT(z1, typ), a_en, Some(t_n)))
 				) cases in
+
+				List.fold_left (fun acc elt -> 
+					let (_, CE(IDENT(lnum, _), IDENT(_, tn), _, _)) = elt in
+					(* Printf.printf "Looking at case element of type: %s\n" tn; *)
+					if List.mem tn acc then failure lnum "Case element type bound twice";
+					tn :: acc
+				) [] case_type_info;
+
 				let (start_acc, _) = List.hd case_type_info in
 				let final_typ = List.fold_left ( fun acc elt -> 
 					let (t_n, _) = elt in

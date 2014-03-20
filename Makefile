@@ -13,4 +13,4 @@ test: ${PROGRAM_NAME}
 	cool --type --out out ${f}.cl
 	cool --parse ${f}.cl
 	./a.out ${f}.cl-ast
-	# diff -b -B -E -w out.cl-type ${f}.cl-type
+	diff -b -B -E -w out.cl-type ${f}.cl-type

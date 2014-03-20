@@ -605,6 +605,20 @@ and impl_map ast =
 
         (* builds a FeatMap which is a map of method name METHOD pairs *)
         let make_method_map ih_attr_list meth_list cls = 
+
+			        let replace_or_add f_l add_fname add_feat cls = begin
+						let (was_replaced, f_l) = List.fold_left (fun acc elt ->
+							let (cur_fname, v) = elt in
+							let (already_added, acc_list) = acc in
+							if cur_fname = add_fname then
+								(true, (acc_list @ [(add_fname, (add_feat, cls))]))
+							else
+								(already_added, (acc_list @ [elt]))
+						) (false, []) f_l in
+						if not was_replaced then (f_l @ [(add_fname, (add_feat, cls))]) else f_l
+					end
+					in
+
                     List.fold_left (fun fl feat -> 
                                         let METHOD(IDENT(ln, fname), IDENT(tln, typ), formals, _) = feat in
                                         (* check if type returned is in our list of valid types *)
@@ -622,7 +636,8 @@ and impl_map ast =
                                                 failure ln "Return type of method redefined";
                                         end;
                                         (* (method name, feat, cls) tells us that this feature was defined in this class *)
-                                        fl @ [(fname, (feat, cls))] 
+                                        replace_or_add fl fname feat cls
+                                        (* fl @ [(fname, (feat, cls))]  *)
                                    )
                                     ih_attr_list
                                     meth_list
