@@ -688,13 +688,23 @@ and make_m i_map =
 (* We are essentially tracing the path from each node to the root node Object
 	and then tracing back the two paths to see where they diverge. This point of
 	divergence is the least common anscestor in the inheritance heirarchy *)
+let check_typ_name typ = 
+	let l = Str.split (Str.regexp "[.]") typ in
+	if (List.length l) > 1 then
+		List.nth l 1
+	else
+		typ
+;;
 let rec trace_to_root pM cls= 
+	let cls = check_typ_name cls in
 	match cls with
 		"Object" -> 
 			(* We have finished tracing to the root *)
 			["Object"]
 	|	c ->
 			(* We want the result to have the root element first *)
+
+			Printf.printf "Looking for parent of %s in trace_to_root\n" c;
 			c :: (trace_to_root pM (ParentMap.find c pM))
 ;;
 
