@@ -809,9 +809,13 @@ and expr_type_check ast environ =
 		   		if name = "self" then
 		   			let typ_name = "SELF_TYPE." ^ cC in
 		   			(typ_name, IDENTIFIER(z, IDENT(z1, name), Some(typ_name )))
-		   		else
-		   			let t = ObjMap.find name oE in
-		   			(t, IDENTIFIER(z, IDENT(z1, name), Some(t) ))
+		   		else begin
+		   			try
+		   				let t = ObjMap.find name oE in
+		   				(t, IDENTIFIER(z, IDENT(z1, name), Some(t) ))
+		   			with
+		   			| Not_found -> failure z ("Unbound identifier " ^ name); ("", TRUE(0, None))
+		   		end
         |	ASSIGN(z, iden, expr, _) ->
             let IDENT(_, t0) = iden in
             let (t1, a_expr) = expr_type_check expr environ in
@@ -832,50 +836,60 @@ and expr_type_check ast environ =
                (self_typ_str, NEW(z, y, Some(self_typ_str)))  
             else
                (t, NEW(z, y, Some(t)))
-        |   DYN_DISPATCH(z, e0, IDENT(z1, meth_name), expr_list, _) ->
+        |   DYN_DISPATCH(z, e0, IDENT(z1, meth_name), expr_list, _) -> begin
         		let (t_0, a_e0) = expr_type_check e0 environ in
         		let typs = type_check_expr_list expr_list environ in
         		let t_0p = if t_0 = ("SELF_TYPE." ^ cC) then cC else t_0 in
 				
 				(* Get out Tn+1 and compare with our actual parameter types *)
-				let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
-        		let m_rev = List.rev m_typ_list in
-        		let m_ret_typ = List.hd m_rev in 
-        		let m_typ_list = List.rev (List.tl m_rev) in
-        		List.iter2 (fun t tp -> 
-        			let (tn, _) = t in
-        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
-        		) typs m_typ_list;
+				try
+					let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+	        		let m_rev = List.rev m_typ_list in
+	        		let m_ret_typ = List.hd m_rev in 
+	        		let m_typ_list = List.rev (List.tl m_rev) in
+	        		List.iter2 (fun t tp -> 
+	        			let (tn, _) = t in
+	        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
+	        		) typs m_typ_list;
 
-        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
-        		let a_e_list = List.map (fun elt -> 
-        			let (t_n, a_en) = elt in
-        			a_en
-        		) typs in
-        		(tnp1, DYN_DISPATCH(z, a_e0, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
-        |   SELF_DISPATCH(z, IDENT(z1, meth_name), expr_list, _) ->
+	        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+	        		let a_e_list = List.map (fun elt -> 
+	        			let (t_n, a_en) = elt in
+	        			a_en
+	        		) typs in
+	        		(tnp1, DYN_DISPATCH(z, a_e0, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
+				with
+				| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0,None))
+			end
+
+        |   SELF_DISPATCH(z, IDENT(z1, meth_name), expr_list, _) -> begin
         		let t_0 = "SELF_TYPE." ^ cC in
         		let typs = type_check_expr_list expr_list environ in
         		let t_0p = if t_0 = ("SELF_TYPE." ^ cC) then cC else t_0 in
 				
 				(* Get out Tn+1 and compare with our actual parameter types *)
-				let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
-        		let m_rev = List.rev m_typ_list in
-        		let m_ret_typ = List.hd m_rev in 
-        		let m_typ_list = List.rev (List.tl m_rev) in
-        		List.iter2 (fun t tp -> 
-        			let (tn, _) = t in
-        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
-        		) typs m_typ_list;
+				try
+					let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+	        		let m_rev = List.rev m_typ_list in
+	        		let m_ret_typ = List.hd m_rev in 
+	        		let m_typ_list = List.rev (List.tl m_rev) in
+	        		List.iter2 (fun t tp -> 
+	        			let (tn, _) = t in
+	        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
+	        		) typs m_typ_list;
 
-        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
-        		let a_e_list = List.map (fun elt -> 
-        			let (t_n, a_en) = elt in
-        			a_en
-        		) typs in
-        		(tnp1, SELF_DISPATCH(z, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
+	        		let tnp1 = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+	        		let a_e_list = List.map (fun elt -> 
+	        			let (t_n, a_en) = elt in
+	        			a_en
+	        		) typs in
+	        		(tnp1, SELF_DISPATCH(z, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
+				with
+				| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0, None))
+					
+        	end
 
-        |   STAT_DISPATCH(z, e0, IDENT(z1, typ), IDENT(z2, meth_name), expr_list, _) ->
+        |   STAT_DISPATCH(z, e0, IDENT(z1, typ), IDENT(z2, meth_name), expr_list, _) -> begin
         		let (t_0, a_e0) = expr_type_check e0 environ in
         		let typs = List.fold_left (fun acc elt -> 
         			let (t_n, a_en) = expr_type_check elt environ in
@@ -884,20 +898,24 @@ and expr_type_check ast environ =
 
         		if not (is_subclass t_0 typ) then failure z "Static dispatch called on non-subclass";
 
-        		let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
-        		let m_rev = List.rev m_typ_list in
-        		let m_ret_typ = List.hd m_rev in 
-        		let m_typ_list = List.rev (List.tl m_rev) in
-        		List.iter2 (fun t tp -> 
-        			let (tn, _) = t in
-        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
-        		) typs m_typ_list;
-        		let ret_t = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
-        		let typs = List.map (fun elt -> 
-        			let (t_n, a_en) = elt in
-        			a_en
-        		) typs in
-        		(ret_t, STAT_DISPATCH(z, a_e0, IDENT(z1, typ), IDENT(z2, meth_name), typs, Some(ret_t)))     
+        		try
+        			let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+	        		let m_rev = List.rev m_typ_list in
+	        		let m_ret_typ = List.hd m_rev in 
+	        		let m_typ_list = List.rev (List.tl m_rev) in
+	        		List.iter2 (fun t tp -> 
+	        			let (tn, _) = t in
+	        			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
+	        		) typs m_typ_list;
+	        		let ret_t = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+	        		let typs = List.map (fun elt -> 
+	        			let (t_n, a_en) = elt in
+	        			a_en
+	        		) typs in
+	        		(ret_t, STAT_DISPATCH(z, a_e0, IDENT(z1, typ), IDENT(z2, meth_name), typs, Some(ret_t)))    
+        		with
+        		| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0, None))
+        	end 
         |   IF_ELSE(z, cond, e_then, e_else, _) ->
             let (cond_T, a_cond) = expr_type_check cond environ in
             if not(cond_T = "Bool") then failure z "If clause must have expression of type Bool";
@@ -951,6 +969,13 @@ and expr_type_check ast environ =
 					let (t_n, a_en) = expr_type_check expr environ in
 					(t_n, CE(IDENT(z, name), IDENT(z1, typ), a_en, Some(t_n)))
 				) cases in
+
+				List.fold_left (fun acc elt -> 
+					let (tn, CE(IDENT(lnum, _), _, _, _)) = elt in
+					if List.mem tn acc then failure lnum "Case element type bound twice";
+					tn :: acc
+				) [] case_type_info;
+
 				let (start_acc, _) = List.hd case_type_info in
 				let final_typ = List.fold_left ( fun acc elt -> 
 					let (t_n, _) = elt in
