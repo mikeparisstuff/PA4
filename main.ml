@@ -88,7 +88,7 @@ and formals = FORMAL of identifier * identifier
 
 (* EXPRESSION TYPE DEF; NOTE optional type notation at last pos *)
 
-and case_element = CE of identifier * identifier * expr * string option
+and case_element = CE of identifier * identifier * expr * cool_type option
 
 (* LB is a special case *)
                   (*            name,         typ *)
@@ -96,33 +96,38 @@ and let_binding = LB_NO_INIT of identifier * identifier
                   (*  name,       typ          some expr *)
 	| LB_INIT of identifier * identifier * expr
 
+and cool_type = COOL_CLASS of string
+	|   SELF_TYPE_C of string
+
+
 (* INT(line_no, value) *)
-and expr = INT of int * int * string option
-	| STRING of int * string * string option
-	| ASSIGN of int * identifier * expr  * string option
-	| DYN_DISPATCH of int * expr * identifier * expr list * string option
-	| STAT_DISPATCH of int * expr * identifier * identifier * expr list * string option
-	| SELF_DISPATCH of int * identifier * expr list * string option
-	| IF_ELSE of int * expr * expr * expr * string option
-	| WHILE of int * expr * expr * string option
-	| BLOCK of int * expr list * string option
-	| NEW of int * identifier * string option
-	| ISVOID of int * expr * string option
-	| PLUS of int * expr * expr * string option 
-        | MINUS of int * expr * expr * string option
-	| TIMES of int * expr * expr * string option
-	| DIVIDE of int * expr * expr * string option
-	| LT of int * expr * expr * string option
-	| LE of int * expr * expr * string option
-	| EQ of int * expr * expr * string option
-	| NOT of int * expr * string option
-	| NEGATE of int * expr * string option
-	| TRUE of int * string option
-	| FALSE of int * string option
-	| LET of int * let_binding list * expr * string option
-	| CASE of int * expr * case_element list * string option
-	| IDENTIFIER of int * identifier * string option
-        | INTERNAL
+and expr = INT of int * int * cool_type option
+	| STRING of int * string * cool_type option
+	| ASSIGN of int * identifier * expr  * cool_type option
+	| DYN_DISPATCH of int * expr * identifier * expr list * cool_type option  (* THIS ONE *)
+	| STAT_DISPATCH of int * expr * identifier * identifier * expr list * cool_type option
+	| SELF_DISPATCH of int * identifier * expr list * cool_type option  (* THIS ONE *)
+	| IF_ELSE of int * expr * expr * expr * cool_type option
+	| WHILE of int * expr * expr * cool_type option  (* THIS ONE *)
+	| BLOCK of int * expr list * cool_type option
+	| NEW of int * identifier * cool_type option
+	| ISVOID of int * expr * cool_type option
+	| PLUS of int * expr * expr * cool_type option 
+    | MINUS of int * expr * expr * cool_type option
+	| TIMES of int * expr * expr * cool_type option
+	| DIVIDE of int * expr * expr * cool_type option
+	| LT of int * expr * expr * cool_type option
+	| LE of int * expr * expr * cool_type option
+	| EQ of int * expr * expr * cool_type option
+	| NOT of int * expr * cool_type option
+	| NEGATE of int * expr * cool_type option
+	| TRUE of int * cool_type option
+	| FALSE of int * cool_type option
+	| LET of int * let_binding list * expr * cool_type option
+	| CASE of int * expr * case_element list * cool_type option (* THIS ONE *)
+	| IDENTIFIER of int * identifier * cool_type option
+    | INTERNAL
+
 
                         (* fname,        type,       no_init or init with expr *)
 and feature = ATTRIBUTE of identifier * identifier * expr option
@@ -672,7 +677,8 @@ and make_m i_map =
 		let sig_list = List.fold_left (fun acc (feat_name, (feat, defining_cls)) -> 
 			let METHOD(IDENT(_, name), IDENT(_, typ), formals_l, _) = feat in
 			let signature = List.fold_left (fun acc form -> 
-				let FORMAL(IDENT(_, name), IDENT(_, typ)) = form in
+				let FORMAL(IDENT(z, name), IDENT(_, typ)) = form in
+				if typ = "SELF_TYPE" then failure z "A formal parameter cannot have type SELF_TYPE";
 				acc @ [typ]
 			) [] formals_l in
 			(* Must also add the return type as the last type *)
@@ -702,9 +708,24 @@ let rec trace_to_root pM cls=
 
 (* LUB! it, either fails or returns the correct type *)
 let lub pM class1 class2 = 
-	let (trace1, trace2) = (trace_to_root pM class1, trace_to_root pM class2) in
-	let our_lub = List.fold_left (fun acc elt -> if (List.mem elt trace2 && acc = "") then elt else acc) "" trace1 in
-	our_lub;;
+	match (class1, class2) with
+		(COOL_CLASS(typ1), COOL_CLASS(typ2)) -> 
+			let (trace1, trace2) = (trace_to_root pM typ1, trace_to_root pM typ2) in
+			let our_lub = List.fold_left (fun acc elt -> if (List.mem elt trace2 && acc = "") then elt else acc) "" trace1 in
+			COOL_CLASS(our_lub)
+	|   (SELF_TYPE_C(typ1), COOL_CLASS(typ2)) -> 
+			let (trace1, trace2) = (trace_to_root pM typ1, trace_to_root pM typ2) in
+			let our_lub = List.fold_left (fun acc elt -> if (List.mem elt trace2 && acc = "") then elt else acc) "" trace1 in
+			COOL_CLASS(our_lub)
+	|   (COOL_CLASS(typ1), SELF_TYPE_C(typ2)) -> 
+			let (trace1, trace2) = (trace_to_root pM typ1, trace_to_root pM typ2) in
+			let our_lub = List.fold_left (fun acc elt -> if (List.mem elt trace2 && acc = "") then elt else acc) "" trace1 in
+			COOL_CLASS(our_lub)
+	|   (SELF_TYPE_C(typ1), SELF_TYPE_C(typ2)) -> 
+			let (trace1, trace2) = (trace_to_root pM typ1, trace_to_root pM typ2) in
+			let our_lub = List.fold_left (fun acc elt -> if (List.mem elt trace2 && acc = "") then elt else acc) "" trace1 in
+			COOL_CLASS(our_lub)
+;;
 
 
         (* does the right thing at every level *)
@@ -716,10 +737,11 @@ let rec type_check ast environ =
     let PROGRAM(z, c_l) = ast in 
     PROGRAM(z, List.map (fun clas -> 
                         let CLASS(IDENT(_, cname), _, _, _) = clas in
-                        let oE = ObjMap.add "self" cname oE in
+                        (* let oE = ObjMap.add "self" "SELF_TYPE" oE in *)
 
                         let oE = List.fold_left (fun acc elt -> match elt with
                         	ATTRIBUTE(IDENT(_, name), IDENT(_, typ), _) ->
+                        		let typ = if typ = "SELF_TYPE" then SELF_TYPE_C(cname) else COOL_CLASS(typ) in
                         		(ObjMap.add name typ acc)
                         |   _ -> acc
                         ) oE (ClassMap.find cname cM) in
@@ -744,8 +766,9 @@ and feat_type_check ast environ =
       | ATTRIBUTE(IDENT(z, name), IDENT(z2, typ), Some(expr)) -> (* ATTR INIT *)
 
              let (ret_t, a_expr) = expr_type_check expr environ in 
+             let typ_check = if typ = "SELF_TYPE" then SELF_TYPE_C(cC) else COOL_CLASS(typ) in
 
-             if not (is_subclass pM ret_t typ) then failure z "Attribute initiazed to expression of type that does not conform to static type";
+             if not (is_subclass pM ret_t typ_check) then failure z "Attribute initiazed to expression of type that does not conform to static type";
              (* let cur_cls = ObjMap.find "THIS_CLASS" oE in *)
              (* if not(lub pM cname ret_t) failure ln "LUB DIED"; *)
              
@@ -755,23 +778,46 @@ and feat_type_check ast environ =
       | METHOD(IDENT(z, name), IDENT(y, typ), formals_l, expr) ->
               let oE = List.fold_left (fun acc fml -> 
                                         let FORMAL(IDENT(_, fn), IDENT(_, ftyp)) = fml in
+                                        let ftyp = if ftyp = "SELF_TYPE" then SELF_TYPE_C(cC) else COOL_CLASS(ftyp) in
                                         ObjMap.add fn ftyp acc
                                       ) oE formals_l in 
               let environ = (oE, mM, cC, pM) in
               let (ret_t, a_expr) = expr_type_check expr environ in
 
-              let t0 = if typ = "SELF_TYPE" then cC (* ObjMap.find "THIS_CLASS" oE *)
-                            else typ in
+              let t0 = if typ = "SELF_TYPE" then SELF_TYPE_C(cC) (* ObjMap.find "THIS_CLASS" oE *)
+                            else COOL_CLASS(typ) in
               if not (is_subclass pM ret_t t0) then failure z "Return type of method does not confrom to declared type";
               METHOD(IDENT(z, name), IDENT(y, typ), formals_l, a_expr)
 
 and is_subclass pM t1 t2 =
-	if t1 = t2 then true else
+	match (t1, t2) with
+		(COOL_CLASS(typ1), COOL_CLASS(typ2)) ->
+			Printf.printf "CC - Comparing types 1: %s  2: %s \n" typ1 typ2;
+			if typ1 = typ2 then true else			
+			if typ1 = "Object" then false else
+			let typ_str = ParentMap.find typ1 pM in
+			is_subclass pM (COOL_CLASS(typ_str)) (COOL_CLASS(typ2))
+	|   (SELF_TYPE_C(typ1), COOL_CLASS(typ2)) -> 
+			Printf.printf "SC - Comparing types 1: %s  2: %s \n" typ1 typ2;
+			if typ1 = typ2 then true else			
+			if typ1 = "Object" then false else
+			is_subclass pM (SELF_TYPE_C((ParentMap.find typ1 pM))) (COOL_CLASS(typ2))
+	|   (COOL_CLASS(typ1), SELF_TYPE_C(typ2)) -> 
+			Printf.printf "CS - Comparing types 1: %s  2: %s \n" typ1 typ2;
+			if typ1 = typ2 then true else			
+			if typ1 = "Object" then false else
+			is_subclass pM (COOL_CLASS((ParentMap.find typ1 pM))) (SELF_TYPE_C(typ2))
+	|   (SELF_TYPE_C(typ1), SELF_TYPE_C(typ2)) -> 
+			Printf.printf "SS - Comparing types 1: %s  2: %s \n" typ1 typ2;
+			if typ1 = typ2 then true else false
+
+	(* if t1 = t2 then true else
+	if t1 = "SELF_TYPE" then true else
 	if t1 = "Object" then false else begin
 		try
 			is_subclass pM (ParentMap.find t1 pM) t2
 		with Not_found -> Printf.printf "Could not find parent\n"; false
-	end
+	end *)
 
 (* handle each case for an expression and return annotated ast + ret_tup type*)
 (* does glorious typechecking *)
@@ -784,42 +830,57 @@ and expr_type_check ast environ =
     Printf.printf "In Class: %s\n" cC;
 
     match ast with
-        	ASSIGN(z, iden, expr, _) ->
-            let IDENT(_, t0) = iden in
+		   IDENTIFIER(z, IDENT(z1, name), _) -> 
+		   		if name = "self" then
+		   			(SELF_TYPE_C(cC), IDENTIFIER(z, IDENT(z1, name), Some(SELF_TYPE_C(cC)) ) )
+		   		else
+		   			let t = ObjMap.find name oE in
+		   			(t, IDENTIFIER(z, IDENT(z1, name), Some(t) ))
+        |	ASSIGN(z, iden, expr, _) ->
+            let IDENT(_, nm) = iden in
+            let t0 = ObjMap.find nm oE in
             let (t1, a_expr) = expr_type_check expr environ in
             if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
             (t1, ASSIGN(z, iden, a_expr, Some(t1)))
         |   TRUE(z, _) ->
-            ("Bool", TRUE(z, Some("Bool")))
+            (COOL_CLASS("Bool"), TRUE(z, Some(COOL_CLASS("Bool"))))
         |   FALSE(z,  _) ->
-            ("Bool", FALSE(z, Some("Bool")))
+            (COOL_CLASS("Bool"), FALSE(z, Some(COOL_CLASS("Bool"))))
         |   INT(z, y, _) -> 
-            ("Int", INT(z, y, Some("Int")))
+            (COOL_CLASS("Int"), INT(z, y, Some(COOL_CLASS("Int"))))
         |   STRING(z, y, _) -> 
-            ("String", STRING(z, y, Some("String")))
+            (COOL_CLASS("String"), STRING(z, y, Some(COOL_CLASS("String"))))
         |   NEW(z, y, _) ->
             let IDENT(_, t) = y in
-            if (* (ObjMap.find "THIS_CLASS" oE) *) cC = t then 
-               ("SELF_TYPE", NEW(z, y, Some("SELF_TYPE")))  
+            if (* (ObjMap.find "THIS_CLASS" oE) *) "SELF_TYPE" = t then 
+               (SELF_TYPE_C(cC), NEW(z, y, Some(SELF_TYPE_C(cC))))  
             else
-               (t, NEW(z, y, Some(t)))
+               (COOL_CLASS(t), NEW(z, y, Some(COOL_CLASS(t))))
         |   STAT_DISPATCH(z, e0, IDENT(z1, typ), IDENT(z2, meth_name), expr_list, _) ->
+
         		let (t_0, a_e0) = expr_type_check e0 environ in
+
         		let typs = List.fold_left (fun acc elt -> 
         			let (t_n, a_en) = expr_type_check elt environ in
         			acc @ [(t_n, a_en)]
         		) [] expr_list in
 
-        		if not (is_subclass t_0 typ) then failure z "Static dispatch called on non-subclass";
+        		if typ = "SELF_TYPE" then failure z "Cannot have SELF_TYPE in the @ section of static dispatch";
+
+        		let t = COOL_CLASS(typ) in
+        		if not (is_subclass t_0 t) then failure z "Static dispatch called on non-subclass";
+
         		let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
         		let m_rev = List.rev m_typ_list in
         		let m_ret_typ = List.hd m_rev in 
         		let m_typ_list = List.rev (List.tl m_rev) in
+
         		List.iter2 (fun t tp -> 
         			let (tn, _) = t in
         			if not (is_subclass tn tp) then failure z "Given formals do not conform to method signature";
         		) typs m_typ_list;
-        		let ret_t = if m_ret_typ = "SELF_TYPE" then t_0 else m_ret_typ in
+
+        		let ret_t = if m_ret_typ = "SELF_TYPE" then t_0 else COOL_CLASS(m_ret_typ) in
         		let typs = List.map (fun elt -> 
         			let (t_n, a_en) = elt in
         			a_en
@@ -827,7 +888,8 @@ and expr_type_check ast environ =
         		(ret_t, STAT_DISPATCH(z, a_e0, IDENT(z1, typ), IDENT(z2, meth_name), typs, Some(ret_t)))     
         |   IF_ELSE(z, cond, e_then, e_else, _) ->
             let (cond_T, a_cond) = expr_type_check cond environ in
-            if not(cond_T = "Bool") then failure z "If clause must have expression of type Bool";
+            let COOL_CLASS(tc) = cond_T in
+            if not(tc = "Bool") then failure z "If clause must have expression of type Bool";
             let (then_T, a_then) = expr_type_check e_then environ in
             let (else_T, a_else) = expr_type_check e_else environ in
             let ret_t = lub pM then_T else_T in
@@ -848,7 +910,7 @@ and expr_type_check ast environ =
                 	let (oE, mM, cC, pM) = environ in
 	                match lb with 
 	                    LB_NO_INIT(IDENT(_, e0), IDENT(_, typ)) ->
-	                    let t0 = if typ = "SELF_TYPE" then cC (* ObjMap.find "THIS_CLASS" oE *) else typ in
+	                    let t0 = if typ = "SELF_TYPE" then SELF_TYPE_C(cC) (* ObjMap.find "THIS_CLASS" oE *) else COOL_CLASS(typ) in
 	                    let environ = (ObjMap.add e0 t0 oE, mM, cC, pM) in
 	                    (btl @ [lb], environ )
 	                    (* let (t1, a_expr2) = expr_type_check expr2 environ in
@@ -856,67 +918,125 @@ and expr_type_check ast environ =
 	                |   LB_INIT(name_id, typ_id, l_expr) ->
 	                        let IDENT(_, name) = name_id in
 	                        let IDENT(_, typ) = typ_id in
+	                        let t0 = if typ = "SELF_TYPE" then SELF_TYPE_C(cC) else COOL_CLASS(typ) in
+	                        let environ = (ObjMap.add name t0 oE, mM, cC, pM) in
 	                        let (l_typ, al_expr) = expr_type_check l_expr environ in
-	                        if not(is_subclass l_typ typ) then failure z "let expr must return sublcass";
-	                        let environ = (ObjMap.add name typ oE, mM, cC, pM) in
+	                        if not(is_subclass l_typ t0) then failure z "let expr must return subclass";
 	                        (btl @ [ LB_INIT(name_id, typ_id, al_expr)], environ )
 	                        (* let (t1, a_expr2) = expr_type_check expr2 environ in
 	                        (t1, LET(z, [LB_INIT(name_id, typ_id, al_expr)], a_expr2, Some(t1))) *)
                 ) ([], environ) lb_list in
 				let (t1, a_expr2) = expr_type_check expr2 environ in
 				(t1, LET(z, binding_tuple_list, a_expr2, Some(t1)))
+		|   CASE(z, e0, cases, _) -> 
+				let (t0, a_e0) = expr_type_check e0 environ in
+				let case_type_info = List.map (fun elt -> 
+					let CE(IDENT(z, name), IDENT(z1, typ), expr, _) = elt in
+					(* Are we allowed to have SELF_TYPE in case expressions? *)
+					(* Also need check for identical case statements here *)
+					let typ_node = if typ = "SELF_TYPE" then SELF_TYPE_C(cC) else COOL_CLASS(cC) in
+					let environ = ( (ObjMap.add name typ_node oE), mM, cC, pM  ) in 
+					let (t_n, a_en) = expr_type_check expr environ in
+					(t_n, CE(IDENT(z, name), IDENT(z1, typ), a_en, Some(t_n)))
+				) cases in
+				let (start_acc, _) = List.hd case_type_info in
+				let final_typ = List.fold_left ( fun acc elt -> 
+					let (t_n, _) = elt in
+					let lubbed = lub pM acc t_n in
+					lubbed
+				) start_acc (List.tl case_type_info) in
+				let annotated_cases = List.map (fun elt -> 
+					let (_, ce) = elt in
+					ce
+				) case_type_info in
+				(final_typ, CASE(z, a_e0, annotated_cases, Some(final_typ)))
+		| 	WHILE(z, e1, e2, _) -> begin
+				let (t1, a_e1) = expr_type_check e1 environ in
+				match t1 with 
+					COOL_CLASS("Bool") -> 
+						let (t2, a_e2) = expr_type_check e2 environ in
+						(COOL_CLASS("Object"), WHILE(z, a_e1, a_e2, Some(COOL_CLASS("Object"))))		
+				|   _ -> failure z "While predicate must have type Bool"; (COOL_CLASS(""), TRUE(0, None)) (* Will never reach *)
+				(* if not (t1 = "Bool") then failure z "While predicate must have type Bool"; *)
+			end
 		|   ISVOID(z, e1, _) ->
 				let (t_e1, a_e1) = expr_type_check e1 environ in
-				("Bool", ISVOID(z, a_e1, Some("Bool")))
-		|   NOT(z, e1, _) ->
+				(COOL_CLASS("Bool"), ISVOID(z, a_e1, Some(COOL_CLASS("Bool"))))
+		|   NOT(z, e1, _) -> begin
 				let (t_e1, a_e1) = expr_type_check e1 environ in
-				if not (t_e1 = "Bool") then failure z "Not expressions must be of Type Bool";
-				("Bool", NOT(z, a_e1, Some("Bool")))
-		|   NEGATE(z, e1, _) ->
+				match t_e1 with
+					COOL_CLASS("Bool") -> (COOL_CLASS("Bool"), NOT(z, a_e1, Some(COOL_CLASS("Bool"))))
+				|   _ -> failure z "Not expressions must be of Type Bool"; (COOL_CLASS(""), TRUE(0, None)) (* Will never reach *)
+				(* if not (t_e1 = "Bool") then failure z "Not expressions must be of Type Bool"; *)
+			end
+		|   NEGATE(z, e1, _) -> begin
 				let (t_e1, a_e1) = expr_type_check e1 environ in
-				if not (t_e1 = "Int") then failure z "Negate expressions must be of Type Int";
-				("Int", NEGATE(z, a_e1, Some("Int")))
-		|   PLUS(z, e1, e2, _) -> 
-				let (t_e1, a_e1) = expr_type_check e1 environ in
-				let (t_e2, a_e2) = expr_type_check e2 environ in
-				if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Plus must have dos integer arguments";
-				("Int", PLUS(z, a_e1, a_e2, Some("Int")))
-		|   MINUS(z, e1, e2, _) -> 
-				let (t_e1, a_e1) = expr_type_check e1 environ in
-				let (t_e2, a_e2) = expr_type_check e2 environ in
-				if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Minus must have dos integer arguments";
-				("Int", MINUS(z, a_e1, a_e2, Some("Int")))
-		|   TIMES(z, e1, e2, _) -> 
+				match t_e1 with
+					COOL_CLASS("Int") -> (COOL_CLASS("Int"), NEGATE(z, a_e1, Some(COOL_CLASS("Int"))))
+				|   _ -> failure z "Negate expressions must be of Type Int"; (COOL_CLASS(""), TRUE(0, None)) (* Will never reach *)
+				(* if not (t_e1 = "Int") then failure z "Negate expressions must be of Type Int";
+				("Int", NEGATE(z, a_e1, Some("Int"))) *)
+			end
+		|   PLUS(z, e1, e2, _) -> begin
 				let (t_e1, a_e1) = expr_type_check e1 environ in
 				let (t_e2, a_e2) = expr_type_check e2 environ in
-				if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Times must have dos integer arguments";
-				("Int", TIMES(z, a_e1, a_e2, Some("Int")))
-		|   DIVIDE(z, e1, e2, _) -> 
+				match (t_e1, t_e2) with
+					(COOL_CLASS("Int"), COOL_CLASS("Int")) -> (COOL_CLASS("Int"), PLUS(z, a_e1, a_e2, Some(COOL_CLASS("Int"))))
+				|   _ -> failure z "Plus must have dos integer arguments"; (COOL_CLASS(""), TRUE(0, None))
+				(* if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Plus must have dos integer arguments";
+				("Int", PLUS(z, a_e1, a_e2, Some("Int"))) *)
+			end
+		|   MINUS(z, e1, e2, _) -> begin
 				let (t_e1, a_e1) = expr_type_check e1 environ in
 				let (t_e2, a_e2) = expr_type_check e2 environ in
-				if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Divide must have dos integer arguments";
-				("Int", DIVIDE(z, a_e1, a_e2, Some("Int")))
+				match (t_e1, t_e2) with
+					(COOL_CLASS("Int"), COOL_CLASS("Int")) -> (COOL_CLASS("Int"), MINUS(z, a_e1, a_e2, Some(COOL_CLASS("Int"))))
+				|   _ -> failure z "Minus must have dos integer arguments"; (COOL_CLASS(""), TRUE(0, None))
+
+				(* if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Minus must have dos integer arguments";
+				("Int", MINUS(z, a_e1, a_e2, Some("Int"))) *)
+			end
+		|   TIMES(z, e1, e2, _) -> begin
+				let (t_e1, a_e1) = expr_type_check e1 environ in
+				let (t_e2, a_e2) = expr_type_check e2 environ in
+				match (t_e1, t_e2) with
+					(COOL_CLASS("Int"), COOL_CLASS("Int")) -> (COOL_CLASS("Int"), TIMES(z, a_e1, a_e2, Some(COOL_CLASS("Int"))))
+				|   _ -> failure z "Times must have dos integer arguments"; (COOL_CLASS(""), TRUE(0, None))
+
+				(* if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Times must have dos integer arguments";
+				("Int", TIMES(z, a_e1, a_e2, Some("Int"))) *)
+			end
+		|   DIVIDE(z, e1, e2, _) -> begin
+				let (t_e1, a_e1) = expr_type_check e1 environ in
+				let (t_e2, a_e2) = expr_type_check e2 environ in
+				match (t_e1, t_e2) with
+					(COOL_CLASS("Int"), COOL_CLASS("Int")) -> (COOL_CLASS("Int"), DIVIDE(z, a_e1, a_e2, Some(COOL_CLASS("Int"))))
+				|   _ -> failure z "Divide must have dos integer arguments"; (COOL_CLASS(""), TRUE(0, None))
+
+				(* if not (t_e1 = "Int" && t_e2 = "Int") then failure z "Divide must have dos integer arguments";
+				("Int", DIVIDE(z, a_e1, a_e2, Some("Int"))) *)
+			end
         |   EQ(z, e1, e2, _)  ->
                 let (t_e1, a_e1) = expr_type_check e1 environ in
                 let (t_e2, a_e2) = expr_type_check e2 environ in
-                let isb = ["Int"; "String"; "Bool"] in
+                let isb = [COOL_CLASS("Int"); COOL_CLASS("String"); COOL_CLASS("Bool")] in
                 if List.mem t_e1 isb && not ( t_e1 = t_e2 ) then 
                     failure z "Cannot compare ints strings and bools with not typ";
-                ("Bool", EQ(z, a_e1, a_e2, Some("Bool")))
+                (COOL_CLASS("Bool"), EQ(z, a_e1, a_e2, Some(COOL_CLASS("Bool"))))
         |   LT(z, e1, e2, _)  ->
                 let (t_e1, a_e1) = expr_type_check e1 environ in
                 let (t_e2, a_e2) = expr_type_check e2 environ in
-                let isb = ["Int"; "String"; "Bool"] in
+                let isb = [COOL_CLASS("Int"); COOL_CLASS("String"); COOL_CLASS("Bool")] in
                 if List.mem t_e1 isb && not ( t_e1 = t_e2 ) then 
                     failure z "Cannot compare ints strings and bools with not typ";
-                ("Bool", LT(z, a_e1, a_e2, Some("Bool")))
+                (COOL_CLASS("Bool"), LT(z, a_e1, a_e2, Some(COOL_CLASS("Bool"))))
         |   LE(z, e1, e2, _)  ->
                 let (t_e1, a_e1) = expr_type_check e1 environ in
                 let (t_e2, a_e2) = expr_type_check e2 environ in
-                let isb = ["Int"; "String"; "Bool"] in
+                let isb = [COOL_CLASS("Int"); COOL_CLASS("String"); COOL_CLASS("Bool")] in
                 if List.mem t_e1 isb && not ( t_e1 = t_e2 ) then 
                     failure z "Cannot compare ints strings and bools with not typ";
-                ("Bool", LE(z, a_e1, a_e2, Some("Bool")))
+                (COOL_CLASS("Bool"), LE(z, a_e1, a_e2, Some(COOL_CLASS("Bool"))))
 
 
         (* and so on *)
@@ -950,7 +1070,7 @@ and print_case_elements elems oc = match elems with
 	[] -> ()
 |   hd :: tl -> match hd with 
 		CE (a, b, e, Some(typ)) ->
-                        Printf.fprintf oc "%s\n" typ;
+            (* Printf.fprintf oc "%s\n" typ; *)
 			print_identifier a oc;
 			print_identifier b oc;
 			print_expr oc e;
@@ -958,16 +1078,28 @@ and print_case_elements elems oc = match elems with
 
 and print_expr oc expr = match expr with
     INT(line_no, value, Some(typ)) ->
-                                        Printf.fprintf oc "%d\n%s\ninteger\n%d\n" line_no typ value;
+   			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
+            Printf.fprintf oc "%d\n%s\ninteger\n%d\n" line_no typ value;
 |   STRING (line_no, str, Some(typ)) -> 
-                                        Printf.fprintf oc "%d\n%s\nstring\n%s\n" line_no typ str;
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
+			Printf.fprintf oc "%d\n%s\nstring\n%s\n" line_no typ str;
 |   DYN_DISPATCH (line_no, e, meth, exprs, Some(typ)) ->
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\ndynamic_dispatch\n" line_no typ;
 					print_expr oc e;
 					print_identifier meth oc;
 					Printf.fprintf oc "%d\n" (List.length exprs);
 					List.iter (print_expr oc) exprs;
 |   STAT_DISPATCH (line_no, e, dec_typ, meth, exprs, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nstatic_dispatch\n" line_no typ;
 					print_expr oc e;
 					print_identifier dec_typ oc;
@@ -975,81 +1107,144 @@ and print_expr oc expr = match expr with
 					Printf.fprintf oc "%d\n" (List.length exprs);
 					List.iter (print_expr oc) exprs;
 |   SELF_DISPATCH (line_no, meth, exprs, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nself_dispatch\n" line_no typ;
 					print_identifier meth oc;
 					Printf.fprintf oc "%d\n" (List.length exprs);
 					List.iter (print_expr oc) exprs;
 |   CASE (line_no, expr, elems, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\ncase\n" line_no typ;
 					print_expr oc expr;
 					Printf.fprintf oc "%d\n" (List.length elems);
 					print_case_elements elems oc;
 |   ASSIGN (line_no, ident, expr, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nassign\n" line_no typ;
 					print_identifier ident oc;
 					print_expr oc expr;
 |   LET (line_no, bindings, expr, Some(typ)) ->
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nlet\n%d\n" line_no typ (List.length bindings);
 					print_bindings bindings oc;
 					print_expr oc expr;
 |   IF_ELSE (line_no, expr1, expr2, expr3, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nif\n" line_no typ;
 					print_expr oc expr1;
 					print_expr oc expr2;
 					print_expr oc expr3;
 |   WHILE (line_no, expr, expr1, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nwhile\n" line_no typ;
 					print_expr oc expr;
 					print_expr oc expr1;
 |   BLOCK (line_no, exprs, Some(typ)) ->
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nblock\n%d\n" line_no typ (List.length exprs);
 					List.iter (print_expr oc) exprs;
 |   IDENTIFIER (line_no, ident, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nidentifier\n" line_no typ;
 					print_identifier ident oc;
 |   PLUS (line_no, lhs, rhs, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nplus\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   MINUS (line_no, lhs, rhs, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nminus\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   TIMES (line_no, lhs, rhs, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\ntimes\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   DIVIDE (line_no, lhs, rhs, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
                                         Printf.fprintf oc "%d\n%s\ndivide\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   LT (line_no, lhs, rhs, Some(typ)) ->
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
 					Printf.fprintf oc "%d\n%s\nlt\n" line_no typ;
 					print_expr oc lhs;
 					print_expr oc rhs;
 |   LE (line_no, expr1, expr2, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
                                         Printf.fprintf oc "%d\n%s\nle\n" line_no typ;
 					print_expr oc expr1;
 					print_expr oc expr2;
 |   EQ (line_no, expr1, expr2, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
                                         Printf.fprintf oc "%d\n%s\neq\n" line_no typ;
 					print_expr oc expr1;
 					print_expr oc expr2;
 |   NOT (line_no, expr, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
                                         Printf.fprintf oc "%d\n%s\nnot\n" line_no typ;
 					print_expr oc expr;
 |   NEGATE (line_no, expr, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
                                         Printf.fprintf oc "%d\n%s\nnegate\n" line_no typ;
 					print_expr oc expr;
 |   ISVOID (line_no, expr, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
                                         Printf.fprintf oc "%d\n%s\nisvoid\n" line_no typ;
 					print_expr oc expr;
 |   NEW (line_no, ident, Some(typ)) -> 
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
                                         Printf.fprintf oc "%d\n%s\nnew\n" line_no typ;
 					print_identifier ident oc;
 |   TRUE (line_no, Some(typ)) ->
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
                                         Printf.fprintf oc "%d\n%s\ntrue\n" line_no typ;
 |   FALSE (line_no, Some(typ)) ->
+			let typ = match typ with 
+   				COOL_CLASS(t) -> t
+   			|   SELF_TYPE_C(t) -> t in
                                         Printf.fprintf oc "%d\n%s\nfalse\n" line_no typ;
 |   _ -> Printf.printf "We failed... BOOOOOO\n";
 ;;
