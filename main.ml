@@ -554,8 +554,6 @@ and formals_equal fml1 fml2 =
         let bad_matches = List.filter (fun (x, y) ->
                                     let FORMAL(IDENT(_, a), IDENT(_, b)) = x in
                                     let FORMAL(IDENT(_, c), IDENT(_, d)) = y in
-                                    print_endline a;
-                                    print_endline c;
                                     not(a = c && b = d)
                                   )
                                   both in
@@ -802,7 +800,6 @@ and expr_type_check ast environ =
     (* let is_subclass pM t1 t2 = true in *)
     (* currying *)
     let is_subclass = is_subclass pM in
-    Printf.printf "In Class: %s\n" cC;
 
     match ast with
     		IDENTIFIER(z, IDENT(z1, name), _) -> 
@@ -816,11 +813,17 @@ and expr_type_check ast environ =
 		   			with
 		   			| Not_found -> failure z ("Unbound identifier " ^ name); ("", TRUE(0, None))
 		   		end
-        |	ASSIGN(z, iden, expr, _) ->
-            let IDENT(_, t0) = iden in
-            let (t1, a_expr) = expr_type_check expr environ in
-            if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
-            (t1, ASSIGN(z, iden, a_expr, Some(t1)))
+        |	ASSIGN(z, iden, expr, _) -> begin
+            let IDENT(_, name) = iden in
+            try 
+                let t0 = ObjMap.find name oE in
+                let (t1, a_expr) = expr_type_check expr environ in
+                if not(is_subclass t1 t0) then failure z "t1 is not a subclass of t0";
+                (t1, ASSIGN(z, iden, a_expr, Some(t1)))
+            with
+                | Not_found -> failure z ("Assignment on unbound iden " ^ name);
+                               ("", TRUE(0, None))
+            end
         |   TRUE(z, _) ->
             ("Bool", TRUE(z, Some("Bool")))
         |   FALSE(z,  _) ->
@@ -843,7 +846,7 @@ and expr_type_check ast environ =
 				
 				(* Get out Tn+1 and compare with our actual parameter types *)
 				try
-					let m_typ_list = List.assoc meth_name (MethodMap.find cC mM) in
+					let m_typ_list = List.assoc meth_name (MethodMap.find t_0p mM) in
 	        		let m_rev = List.rev m_typ_list in
 	        		let m_ret_typ = List.hd m_rev in 
 	        		let m_typ_list = List.rev (List.tl m_rev) in
@@ -860,6 +863,7 @@ and expr_type_check ast environ =
 	        		(tnp1, DYN_DISPATCH(z, a_e0, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
 				with
 				| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0,None))
+                | Invalid_argument(_) -> failure z "Invalid number of arguments"; ("", TRUE(0, None))
 			end
 
         |   SELF_DISPATCH(z, IDENT(z1, meth_name), expr_list, _) -> begin
@@ -886,6 +890,7 @@ and expr_type_check ast environ =
 	        		(tnp1, SELF_DISPATCH(z, IDENT(z1, meth_name), a_e_list, Some(tnp1)))
 				with
 				| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0, None))
+                | Invalid_argument(_) -> failure z "Invalid number of arguments"; ("", TRUE(0, None))
 					
         	end
 
@@ -915,6 +920,7 @@ and expr_type_check ast environ =
 	        		(ret_t, STAT_DISPATCH(z, a_e0, IDENT(z1, typ), IDENT(z2, meth_name), typs, Some(ret_t)))    
         		with
         		| Not_found -> failure z1 ("unknown method " ^ meth_name); ("", TRUE(0, None))
+                | Invalid_argument(_) -> failure z "Invalid number of arguments"; ("", TRUE(0, None))
         	end 
         |   IF_ELSE(z, cond, e_then, e_else, _) ->
             let (cond_T, a_cond) = expr_type_check cond environ in
