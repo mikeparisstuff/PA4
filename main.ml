@@ -782,11 +782,13 @@ and feat_type_check ast environ =
               let (ret_t, a_expr) = expr_type_check expr environ in
 
               let t0 = if typ = "SELF_TYPE" then ("SELF_TYPE." ^ cC) else typ in
+              (* Printf.printf "In class: %s ,  t0 = %s : typ = %s\n" cC t0 typ; *)
               if not (is_subclass pM ret_t t0) then failure z "Return type of method does not confrom to declared type";
               METHOD(IDENT(z, name), IDENT(y, typ), formals_l, a_expr)
 
 and is_subclass pM t1 t2 =
 	let check typ1 typ2 = 
+			(* Printf.printf "Comparing: %s %s\n" t1 t2; *)
 			if typ1 = typ2 then true else
 			if typ1 = "Object" then false else begin
 				try

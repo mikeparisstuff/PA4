@@ -136,7 +136,7 @@ print
 0
 Complex
 33
-SELF_TYPE
+Complex
 if
 33
 Bool
@@ -497,7 +497,7 @@ main
 0
 Main
 3
-SELF_TYPE
+Main
 let
 1
 let_binding_init
@@ -525,11 +525,11 @@ Int
 integer
 1
 4
-SELF_TYPE
+Main
 block
 2
 6
-SELF_TYPE
+Main
 if
 6
 Bool
@@ -577,7 +577,7 @@ String
 string
 failed\n
 11
-SELF_TYPE
+Main
 if
 11
 Bool
@@ -731,7 +731,7 @@ main
 2
 SELF_TYPE
 3
-SELF_TYPE
+Main
 let
 1
 let_binding_init
@@ -759,11 +759,11 @@ Int
 integer
 1
 4
-SELF_TYPE
+Main
 block
 2
 6
-SELF_TYPE
+Main
 if
 6
 Bool
@@ -811,7 +811,7 @@ String
 string
 failed\n
 11
-SELF_TYPE
+Main
 if
 11
 Bool
@@ -933,7 +933,7 @@ print
 32
 Object
 33
-SELF_TYPE
+Complex
 if
 33
 Bool
